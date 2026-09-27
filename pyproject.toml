@@ -1,0 +1,18 @@
+[project]
+name = "herdr-autopark"
+version = "0.2.0"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 130
+target-version = "py311"
+# The scripts have no .py extension; list them so ruff picks them up.
+extend-include = ["bin/autopark", "bin/parked-view"]
+
+[tool.ruff.format]
+quote-style = "preserve"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "UP", "SIM", "I"]
+# One-shot reads of /proc and small files; CPython closes them as soon as the expression ends.
+ignore = ["SIM115"]

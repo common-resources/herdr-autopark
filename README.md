@@ -154,8 +154,16 @@ These are planned, roughly in order. None of them are built yet.
 
 **Upkeep**
 
-- [ ] Run the self-check in CI on every push
 - [ ] Warn in `autopark.setup` when an agent's herdr integration is missing, since that is where the session id and state come from
+
+## Development
+
+```sh
+make check   # ruff, shellcheck, shfmt and the self-check; this is what CI runs
+make fmt     # apply ruff and shfmt fixes
+```
+
+The only requirement is [uv](https://docs.astral.sh/uv/): the linters run through `uvx`, and the self-check (`bin/test_autopark.py`) is plain Python that also runs under pytest.
 
 ## Like it?
 
