@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Draw a still agent-style screen for a parked pane: the transcript tail fitted to the
-terminal, then a fake prompt box. herdr-parked-wait calls it on the alternate screen, so
+"""Draw a still screen for a parked pane: the agent's own screen captured at park time (or,
+without one, its history drawn from the session), then a fake prompt box. herdr-parked-wait calls it on the alternate screen, so
 there is no scrollback to scroll into.
 Usage: herdr-parked-view <session-id> <title> <parked-note>"""
 import os, re, shutil, sys, textwrap
@@ -41,11 +41,47 @@ def render(block):
     return [f"  {DIM}⎿  {block[1][: W - 6]}{RST}"]
 
 
-h = HARNESSES.get(os.environ.get('AUTOPARK_KIND') or 'claude')
-try:
-    lines = [ln for b in h.blocks(sid) for ln in render(b)]
-except Exception as e:  # a broken history must not leave the pane blank
-    lines = ["", f"{DIM}(could not read the conversation: {e}){RST}"]
+SGR_ANY = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def crop(line, width):
+    """Cut an ANSI line to `width` visible cells, keeping its escapes."""
+    out, seen = [], 0
+    for part in re.split(r"(\x1b\[[0-9;]*m)", line):
+        if SGR_ANY.fullmatch(part):
+            out.append(part)
+            continue
+        out.append(part[: max(width - seen, 0)])
+        seen += len(part)
+    return "".join(out) + RST
+
+
+def snapshot_lines(path):
+    """The agent's screen as it was at park time, minus its own input box (from the rule above
+    the last ❯ prompt down), which the parked footer replaces."""
+    snap = open(path, errors="replace").read().rstrip("\n").split("\n")
+    plain = [SGR_ANY.sub("", ln) for ln in snap]
+    prompts = [i for i, t in enumerate(plain) if "❯" in t]
+    if prompts:
+        cut = prompts[-1]
+        if cut and plain[cut - 1].strip().startswith("─"):
+            cut -= 1
+        snap = snap[:cut]
+    while snap and not SGR_ANY.sub("", snap[-1]).strip():
+        snap.pop()
+    return [crop(ln, cols) for ln in snap]
+
+
+lines = []
+snap_path = os.environ.get("AUTOPARK_SNAPSHOT")
+if snap_path and os.path.exists(snap_path):
+    lines = snapshot_lines(snap_path)
+if not lines:
+    h = HARNESSES.get(os.environ.get("AUTOPARK_KIND") or "claude")
+    try:
+        lines = [ln for b in h.blocks(sid) for ln in render(b)]
+    except Exception as e:  # a broken history must not leave the pane blank
+        lines = ["", f"{DIM}(could not read the conversation: {e}){RST}"]
 if not lines:
     lines = ["", f"{DIM}(conversation not found){RST}"]
 

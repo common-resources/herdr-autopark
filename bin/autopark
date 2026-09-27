@@ -259,8 +259,9 @@ def idle_note(idle_min):
     return f'{span} idle, parked {dt.datetime.now():%H:%M}'
 
 
-def waiter_command(kind, sid, cwd, title, note, relaunch):
-    env = [f'AUTOPARK_KIND={kind}'] + ([] if CFG['show_transcript'] else ['AUTOPARK_PLAIN=1'])
+def waiter_command(kind, sid, cwd, title, note, relaunch, snapshot):
+    env = [f'AUTOPARK_KIND={kind}'] + ([f'AUTOPARK_SNAPSHOT={snapshot}'] if snapshot else [])
+    env += [] if CFG['show_transcript'] else ['AUTOPARK_PLAIN=1']
     return ' '.join(shlex.quote(x) for x in [*env, WAITER, sid, cwd, title, note, *relaunch])
 
 
@@ -269,11 +270,19 @@ def park(a, facts):
     title = a.get('terminal_title_stripped') or sid
     relaunch = h.relaunch(open(f'/proc/{pid}/cmdline', 'rb').read().decode().split('\0')[:-1], sid)
     note = idle_note(facts['idle_min'])
-    cmd = waiter_command(h.kind, sid, cwd, title, note, relaunch)
     if DRY or CFG['dry_run']:
         log(f'WOULD PARK {pane} {title!r} idle={facts["idle_min"]}m -> {shlex.join(relaunch)}')
         return
     os.makedirs(f'{STATE_DIR}/parked', exist_ok=True)
+    # The agent's own screen, replayed while parked: exact look, no per-agent drawing code.
+    snapshot = f'{STATE_DIR}/parked/{sid}.screen'
+    try:
+        with open(snapshot, 'w') as f:
+            f.write(herdr('pane', 'read', pane, '--source', 'visible', '--format', 'ansi', '--lines', '200'))
+    except (RuntimeError, OSError, subprocess.SubprocessError) as e:
+        log(f'snapshot failed for {pane}, parked view will draw the history instead: {e}')
+        snapshot = None
+    cmd = waiter_command(h.kind, sid, cwd, title, note, relaunch, snapshot)
     json.dump({'pane': pane, 'kind': h.kind, 'sid': sid, 'cwd': cwd, 'title': title, 'relaunch': relaunch, 'note': note,
                'idle_min': facts['idle_min'], 'parked_at': dt.datetime.now().isoformat(timespec='seconds')},
               open(f'{STATE_DIR}/parked/{sid}.json', 'w'), indent=2)

@@ -44,7 +44,7 @@ Other agents herdr detects are left alone. Each harness is one small class in [`
 
 ## What you get
 
-- A still view of the conversation. A parked pane shows the end of the transcript, drawn the way the agent draws it, under a prompt box. It has no scrollback, and the wheel and arrow keys do nothing, so a stray scroll can't write into it.
+- A still view of the conversation. Right before parking, autopark captures the agent's own screen and replays it in the pane, with a prompt box at the bottom. If the capture fails, it draws the conversation from the session history instead. It has no scrollback, and the wheel and arrow keys do nothing, so a stray scroll can't write into it.
 - It stays in the sidebar. Parked panes keep their place, tagged `parked` and colored, with a note such as `4.1d idle, parked 23:34`.
 - Resume with Enter. The agent comes back on the same session with the flags you started it with. Ctrl+C drops to a plain shell instead.
 - Careful about what counts as idle. When anything suggests the agent is still busy, it is left alone (see below).
@@ -63,7 +63,7 @@ herdr plugin action invoke autopark.config   # opens the config in $EDITOR
 | `resume_grace_minutes` | same as `idle_minutes` | After you resume a pane, keep it awake at least this long |
 | `exclude` | `[]` | Session ids or pane ids never to park |
 | `extra_benign_children` | `[]` | Regexes for more child processes that are idle servers, not work |
-| `show_transcript` | `true` | Set `false` for a one-line banner instead of the conversation |
+| `show_transcript` | `true` | Set `false` for a one-line banner instead of the captured screen |
 | `dry_run` | `false` | Log what would be parked, park nothing |
 
 The file lives in `herdr plugin config-dir autopark`. [`config.example.toml`](config.example.toml) has every key with a comment.

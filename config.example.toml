@@ -17,7 +17,7 @@ exclude = []
 # MCP servers, LSPs and Claude's own git polls are already covered.
 extra_benign_children = []
 
-# true: the parked pane shows the end of the conversation. false: a one-line banner.
+# true: the parked pane shows the agent's screen as it was when parked. false: a one-line banner.
 show_transcript = true
 
 # true: only log what would be parked (see the log), park nothing.

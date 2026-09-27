@@ -22,3 +22,16 @@ assert ap.typed_text(' \x1b[2mTry "fix lint"\x1b[22m') == ''
 assert ap.typed_text(' \x1b[38;2;215;119;87mhalf a sentence\x1b[0m') == 'half a sentence'
 assert ap.typed_text(' plain draft') == 'plain draft'
 print('ok')
+
+# the parked view replays a snapshot: the agent's input box is cut, long lines are cropped
+import subprocess, tempfile  # noqa: E402
+with tempfile.NamedTemporaryFile('w', suffix='.screen', delete=False) as f:
+    f.write('\x1b[1mhistory line\x1b[0m\n' + 'x' * 300 + '\n───\n❯ my old draft\n───\nstatus bar\n')
+out = subprocess.run([f'{here}/parked-view', 'sid', 'title', 'note'], capture_output=True, text=True,
+                     env={**os.environ, 'AUTOPARK_SNAPSHOT': f.name, 'COLUMNS': '80', 'LINES': '12'}).stdout
+os.unlink(f.name)
+plain = [ap.SGR.sub('', ln) for ln in out.replace('\x1b[H\x1b[2J', '').split('\n')]
+assert 'history line' in plain and 'x' * 80 in plain, plain
+assert not any('my old draft' in ln or 'status bar' in ln for ln in plain), plain
+assert any('Press Enter to resume' in ln for ln in plain)
+print('ok view')
