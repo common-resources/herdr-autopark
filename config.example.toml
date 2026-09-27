@@ -1,0 +1,24 @@
+# Autopark config. Every key is optional; the values below are the defaults.
+# Changes apply on the next sweep, no restart needed.
+
+# Park a Claude agent after this many minutes without a message or subagent activity.
+idle_minutes = 60
+
+# How often the background loop checks.
+interval_minutes = 10
+
+# After you resume a parked pane, keep it awake at least this long (defaults to idle_minutes).
+# resume_grace_minutes = 60
+
+# Session ids or pane ids that are never parked.
+exclude = []
+
+# Extra regexes for child processes of Claude that are idle servers, not work in flight.
+# MCP servers, LSPs and Claude's own git polls are already covered.
+extra_benign_children = []
+
+# true: the parked pane shows the end of the conversation. false: a one-line banner.
+show_transcript = true
+
+# true: only log what would be parked (see the log), park nothing.
+dry_run = false

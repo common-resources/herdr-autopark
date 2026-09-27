@@ -1,0 +1,400 @@
+#!/usr/bin/env python3
+"""Park idle Claude Code agents in herdr panes to free their RAM, and leave a one-keypress resume in the pane.
+
+Park = send /exit to the agent (Claude and all its MCP servers exit), then run a small bash
+prompt in the same pane that waits for Enter and relaunches `claude <same flags> --resume <id>`.
+The conversation, cwd and flags come back exactly; only the processes are gone meanwhile.
+
+An agent is parked only when every check says it is truly idle. Any doubt means skip:
+  - herdr state is idle/done (never working, blocked, unknown) and the pane is not focused
+  - last real user/assistant message in the transcript is older than IDLE_MINUTES. This
+    survives herdr/Claude restarts: a restart rewrites the transcript mtime and resets herdr's
+    idle timer, but not the message timestamps.
+  - no subagent/workflow file under the session dir changed within IDLE_MINUTES
+  - no pending ScheduleWakeup (/loop), un-deleted CronCreate, or Monitor since Claude started
+  - Claude has no child process besides known MCP/LSP servers (a background Bash task, dev
+    server, test run or shell keeps it awake)
+  - the input box holds no unsent draft
+  - session id / pane id is not in the config `exclude` list (config.example.toml)
+Every check is repeated right before /exit to close the race with a user typing.
+
+Usage: autopark [--daemon] [--dry-run] [--idle-minutes N] [--only PANE_ID] [--verbose]
+"""
+import datetime as dt
+import glob
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+import time
+import tomllib
+
+HOME = os.path.expanduser('~')
+HERE = os.path.dirname(os.path.realpath(__file__))
+WAITER = f'{HERE}/parked-wait'
+STATE_DIR = os.path.join(os.environ.get('XDG_STATE_HOME') or f'{HOME}/.local/state', 'herdr-autopark')
+PLUGIN_ID = 'autopark'
+DEFAULTS = {
+    'idle_minutes': 60,  # park after this long without a message or subagent activity
+    'interval_minutes': 10,  # how often the background loop sweeps
+    'resume_grace_minutes': None,  # after a resume, stay awake this long (None = idle_minutes)
+    'exclude': [],  # session ids or pane ids never to park
+    'extra_benign_children': [],  # regexes for more child processes that do not count as work
+    'show_transcript': True,  # parked pane shows the transcript tail (False = plain banner)
+    'dry_run': False,  # log what would be parked, park nothing
+}
+# Children that are part of an idle session, not work in flight.
+BENIGN_DEFAULT = (
+    r'mcp-server|mcp_server|[-_/]mcp\b|\bmcp[-_]|/node_modules/@modelcontextprotocol/|/bin/semble\b|\buv\b.*\brun\b.*mcp'
+    r'|^\S*git -c core\.fsmonitor= -c core\.hooksPath=/dev/null'
+    r'|typescript-language-server|tsserver|rust-analyzer|vtsls|pyright|gopls'
+)
+SHELL = re.compile(r'^(\S*/)?(ba|z|fi|da)?sh\b')
+TAIL_BYTES = 3_000_000
+
+
+def config_path():
+    if os.environ.get('AUTOPARK_CONFIG'):
+        return os.environ['AUTOPARK_CONFIG']
+    try:
+        d = subprocess.run(['herdr', 'plugin', 'config-dir', PLUGIN_ID], capture_output=True, text=True, timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        d = ''
+    return os.path.join(d or f'{HOME}/.config/herdr/plugins/config/{PLUGIN_ID}', 'config.toml')
+
+
+def load_config():
+    cfg = dict(DEFAULTS)
+    try:
+        with open(config_path(), 'rb') as f:
+            user = tomllib.load(f)
+    except FileNotFoundError:
+        user = {}
+    except (OSError, tomllib.TOMLDecodeError) as e:
+        print(f'autopark: bad config, using defaults: {e}', file=sys.stderr)
+        user = {}
+    unknown = set(user) - set(DEFAULTS)
+    if unknown:
+        print(f'autopark: unknown config keys ignored: {sorted(unknown)}', file=sys.stderr)
+    cfg.update({k: v for k, v in user.items() if k in DEFAULTS})
+    if cfg['resume_grace_minutes'] is None:
+        cfg['resume_grace_minutes'] = cfg['idle_minutes']
+    return cfg
+
+
+CFG = load_config()
+IDLE_MINUTES = CFG['idle_minutes']
+BENIGN_CHILD = re.compile('|'.join([BENIGN_DEFAULT, *CFG['extra_benign_children']]))
+
+DRY = '--dry-run' in sys.argv  # interactive preview: print, write nothing
+VERBOSE = '--verbose' in sys.argv or '--dry-run' in sys.argv
+ONLY = sys.argv[sys.argv.index('--only') + 1] if '--only' in sys.argv else None
+if '--idle-minutes' in sys.argv:
+    IDLE_MINUTES = int(sys.argv[sys.argv.index('--idle-minutes') + 1])
+
+
+def log(msg):
+    line = f'{dt.datetime.now().isoformat(timespec="seconds")} {msg}'
+    if VERBOSE:
+        print(line)
+    if not DRY:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        with open(f'{STATE_DIR}/log', 'a') as f:
+            f.write(line + '\n')
+
+
+def herdr(*args):
+    r = subprocess.run(['herdr', *args], capture_output=True, text=True, timeout=30)
+    if r.returncode:
+        raise RuntimeError(f'herdr {" ".join(args[:2])}: {r.stderr.strip()[:200]}')
+    return r.stdout
+
+
+def agents():
+    return json.loads(herdr('agent', 'list'))['result']['agents']
+
+
+def claude_pid_for(pane_id):
+    for pid in filter(str.isdigit, os.listdir('/proc')):
+        try:
+            if os.readlink(f'/proc/{pid}/exe').split('/')[-1] != 'claude' and \
+               open(f'/proc/{pid}/comm').read().strip() != 'claude':
+                continue
+            env = open(f'/proc/{pid}/environ', 'rb').read().split(b'\0')
+        except OSError:
+            continue
+        if f'HERDR_PANE_ID={pane_id}'.encode() in env:
+            return int(pid)
+    return None
+
+
+def proc_start_epoch(pid):
+    boot = time.time() - float(open('/proc/uptime').read().split()[0])
+    ticks = int(open(f'/proc/{pid}/stat').read().rsplit(')', 1)[1].split()[19])
+    return boot + ticks / os.sysconf('SC_CLK_TCK')
+
+
+def busy_children(pid):
+    """Descendants that are real work. Subtrees under a benign MCP/LSP server are ignored."""
+    kids = {}
+    for p in filter(str.isdigit, os.listdir('/proc')):
+        try:
+            st = open(f'/proc/{p}/stat').read().rsplit(')', 1)[1].split()
+            kids.setdefault(int(st[1]), []).append((int(p), st[0]))
+        except OSError:
+            continue
+    busy, stack = [], [pid]
+    while stack:
+        parent = stack.pop()
+        for child, state in kids.get(parent, []):
+            if state == 'Z':
+                continue
+            try:
+                cmd = open(f'/proc/{child}/cmdline', 'rb').read().replace(b'\0', b' ').decode(errors='replace').strip()
+            except OSError:
+                continue
+            # Only Claude's own direct children can be servers; a shell is always work in flight,
+            # even when its command line happens to mention "mcp".
+            if parent == pid and not SHELL.match(cmd) and BENIGN_CHILD.search(cmd):
+                continue
+            busy.append(cmd[:100])
+            stack.append(child)
+    return busy
+
+
+def parse_ts(s):
+    return dt.datetime.fromisoformat(s.replace('Z', '+00:00')).timestamp()
+
+
+def transcript_facts(path, since_epoch):
+    """Last real message time, and whether a wakeup/cron/monitor is still pending."""
+    size = os.path.getsize(path)
+    with open(path, 'rb') as f:
+        f.seek(max(0, size - TAIL_BYTES))
+        lines = f.read().decode(errors='replace').splitlines()[1 if size > TAIL_BYTES else 0:]
+    last_msg, pending, crons = None, [], {}
+    for line in lines:
+        try:
+            o = json.loads(line)
+        except ValueError:
+            continue
+        if o.get('type') not in ('user', 'assistant') or o.get('isMeta') or not o.get('timestamp'):
+            continue
+        ts = parse_ts(o['timestamp'])
+        last_msg = ts
+        if o['type'] != 'assistant' or ts < since_epoch:
+            continue
+        for c in (o.get('message') or {}).get('content') or []:
+            if not isinstance(c, dict) or c.get('type') != 'tool_use':
+                continue
+            name, inp = c.get('name'), c.get('input') or {}
+            if name == 'ScheduleWakeup':
+                pending = [] if inp.get('stop') else [('wakeup', ts + float(inp.get('delaySeconds') or 0))]
+            elif name == 'CronCreate':
+                crons[c.get('id')] = ts
+            elif name == 'CronDelete':
+                crons.clear()  # ids differ from tool_use ids; any delete after a create is treated as teardown
+            elif name == 'Monitor':
+                pending.append(('monitor', float('inf')))
+    now = time.time()
+    live = [kind for kind, until in pending if until > now - 600]
+    if crons:
+        live.append('cron')
+    return last_msg, live
+
+
+def newest_mtime(dirpath):
+    newest = 0
+    for root, _, files in os.walk(dirpath):
+        for fn in files:
+            try:
+                newest = max(newest, os.path.getmtime(os.path.join(root, fn)))
+            except OSError:
+                pass
+    return newest
+
+
+def draft_text(pane_id):
+    screen = herdr('pane', 'read', pane_id, '--source', 'detection', '--lines', '40')
+    prompt_lines = [l for l in screen.splitlines() if l.lstrip().startswith('❯')]
+    if not prompt_lines:
+        return '?no-input-box'
+    return prompt_lines[-1].lstrip()[1:].strip()
+
+
+def excluded():
+    return {str(x) for x in CFG['exclude']}
+
+
+def evaluate(a, excl):
+    """Return (reason_to_skip or None, facts)."""
+    pane, sid = a['pane_id'], (a.get('agent_session') or {}).get('value')
+    if a.get('agent') != 'claude':
+        return 'not claude', {}
+    if (a.get('state_labels') or {}).get('idle') == 'parked':
+        return 'already parked', {}
+    if a.get('agent_status') not in ('idle', 'done'):
+        return f"state {a.get('agent_status')}", {}
+    if a.get('focused'):
+        return 'focused', {}
+    if not sid:
+        return 'no session id', {}
+    if sid in excl or pane in excl:
+        return 'excluded', {}
+    tx = glob.glob(f'{HOME}/.claude/projects/*/{sid}.jsonl')
+    if not tx:
+        return 'no transcript', {}
+    pid = claude_pid_for(pane)
+    if not pid:
+        return 'claude pid not found', {}
+    started = proc_start_epoch(pid)
+    # A pane this script parked and the user then resumed gets a full idle window from the
+    # resume, even if they only looked. A herdr/Claude restart earns no such grace.
+    rec = f'{STATE_DIR}/parked/{sid}.json'
+    if os.path.exists(rec) and started > os.path.getmtime(rec) and time.time() - started < CFG['resume_grace_minutes'] * 60:
+        return f'resumed from park {(time.time() - started) / 60:.0f}m ago', {}
+    last_msg, pending = transcript_facts(tx[0], started)
+    if not last_msg:
+        return 'no messages', {}
+    sub = newest_mtime(tx[0][:-6])  # <sid>/ dir: subagents, workflows
+    last_act = max(last_msg, sub)
+    idle_min = (time.time() - last_act) / 60
+    facts = {'pid': pid, 'transcript': tx[0], 'idle_min': round(idle_min), 'sid': sid}
+    if idle_min < IDLE_MINUTES:
+        return f'active {idle_min:.0f}m ago', facts
+    if pending:
+        return f"pending {','.join(pending)}", facts
+    busy = busy_children(pid)
+    if busy:
+        return f'busy child: {busy[0]}', facts
+    draft = draft_text(pane)
+    if draft:
+        return f'draft/no input box: {draft[:30]!r}', facts
+    return None, facts
+
+
+def relaunch_argv(pid, sid):
+    """Claude's own argv with any old --resume/--continue dropped and --resume <sid> appended."""
+    argv = open(f'/proc/{pid}/cmdline', 'rb').read().decode().split('\0')[:-1]
+    out, skip = [], False
+    for x in argv[1:]:
+        if skip:
+            skip = False
+            continue
+        if x in ('--resume', '-r', '--session-id'):
+            skip = True
+            continue
+        if x in ('--continue', '-c') or x.startswith('--resume='):
+            continue
+        out.append(x)
+    return ['claude', *out, '--resume', sid]
+
+
+def idle_note(idle_min):
+    h = idle_min / 60
+    span = f'{h / 24:.1f}d' if h >= 48 else f'{h:.0f}h'
+    return f'{span} idle, parked {dt.datetime.now():%H:%M}'
+
+
+def waiter_command(sid, cwd, title, note, relaunch):
+    env = [] if CFG['show_transcript'] else ['AUTOPARK_PLAIN=1']
+    return ' '.join(shlex.quote(x) for x in [*env, WAITER, sid, cwd, title, note, *relaunch])
+
+
+def park(a, facts):
+    pane, pid, sid = a['pane_id'], facts['pid'], facts['sid']
+    cwd = os.readlink(f'/proc/{pid}/cwd')
+    title = a.get('terminal_title_stripped') or sid
+    relaunch = relaunch_argv(pid, sid)
+    note = idle_note(facts['idle_min'])
+    cmd = waiter_command(sid, cwd, title, note, relaunch)
+    if DRY or CFG['dry_run']:
+        log(f'WOULD PARK {pane} {title!r} idle={facts["idle_min"]}m -> {shlex.join(relaunch)}')
+        return
+    os.makedirs(f'{STATE_DIR}/parked', exist_ok=True)
+    json.dump({'pane': pane, 'sid': sid, 'cwd': cwd, 'title': title, 'relaunch': relaunch, 'note': note,
+               'idle_min': facts['idle_min'], 'parked_at': dt.datetime.now().isoformat(timespec='seconds')},
+              open(f'{STATE_DIR}/parked/{sid}.json', 'w'), indent=2)
+    herdr('agent', 'prompt', pane, '/exit')
+    for _ in range(60):
+        if not os.path.exists(f'/proc/{pid}'):
+            break
+        time.sleep(0.5)
+    else:
+        log(f'PARK ABORTED {pane} {title!r}: claude pid {pid} still alive 30s after /exit; left untouched')
+        return
+    time.sleep(1)  # let the pane shell redraw its prompt before typing into it
+    herdr('pane', 'run', pane, cmd)
+    log(f'PARKED {pane} {title!r} idle={facts["idle_min"]}m sid={sid}')
+
+
+def main():
+    excl = excluded()
+    for a in agents():
+        if ONLY and a['pane_id'] != ONLY:
+            continue
+        reason, facts = evaluate(a, excl)
+        name = a.get('terminal_title_stripped', '')[:40]
+        if reason:
+            if VERBOSE:
+                log(f"skip {a['pane_id']} {name!r}: {reason}")
+            continue
+        # Re-check everything just before acting: the user may have started typing.
+        fresh = next((x for x in agents() if x['pane_id'] == a['pane_id']), None)
+        reason, facts = evaluate(fresh, excl) if fresh else ('vanished', {})
+        if reason:
+            log(f"skip {a['pane_id']} {name!r} on recheck: {reason}")
+            continue
+        try:
+            park(fresh, facts)
+        except Exception as e:  # one bad pane must not stop the sweep
+            log(f"ERROR {a['pane_id']} {name!r}: {e}")
+
+
+def plugin_enabled():
+    """True/False from herdr, None when the server cannot be reached."""
+    try:
+        out = herdr('plugin', 'list', '--plugin', PLUGIN_ID, '--json')
+    except (RuntimeError, OSError, subprocess.SubprocessError):
+        return None
+    data = json.loads(out)
+    plugins = data if isinstance(data, list) else (data.get('result') or data).get('plugins', [])
+    return any(p.get('plugin_id') == PLUGIN_ID and p.get('enabled') for p in plugins)
+
+
+def daemon():
+    """Background sweep started by the plugin's [[startup]] hook. One instance per user; it
+    exits when the plugin is disabled or removed, or when the herdr server stays unreachable."""
+    global CFG, IDLE_MINUTES, BENIGN_CHILD
+    import fcntl
+    os.makedirs(STATE_DIR, exist_ok=True)
+    lock = open(f'{STATE_DIR}/daemon.lock', 'w')
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return  # already running (server restart, live handoff)
+    lock.write(str(os.getpid()))
+    lock.flush()
+    log(f'daemon started pid={os.getpid()}')
+    misses = 0
+    while os.path.exists(WAITER):
+        enabled = plugin_enabled()
+        misses = misses + 1 if enabled is None else 0
+        if enabled is False or misses >= 3:
+            break
+        if enabled:
+            # Re-read each sweep so config edits apply without a restart.
+            CFG = load_config()
+            IDLE_MINUTES, BENIGN_CHILD = CFG['idle_minutes'], re.compile('|'.join([BENIGN_DEFAULT, *CFG['extra_benign_children']]))
+            try:
+                main()
+            except Exception as e:  # keep the loop alive; the next sweep retries
+                log(f'ERROR sweep: {e}')
+        time.sleep(max(1, CFG['interval_minutes']) * 60)
+    log('daemon stopped')
+
+
+if __name__ == '__main__':
+    daemon() if '--daemon' in sys.argv else main()

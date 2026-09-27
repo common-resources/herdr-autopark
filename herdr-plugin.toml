@@ -1,0 +1,55 @@
+id = "autopark"
+name = "Autopark"
+version = "0.1.0"
+# [[startup]] hooks and custom agent reports need 0.7.5+; built and tested on 0.9.0.
+min_herdr_version = "0.7.5"
+description = "Park Claude Code agents idle for an hour to free their RAM; the pane keeps a still view of the conversation and Enter resumes it"
+# Reads /proc to match panes to Claude processes.
+platforms = ["linux"]
+
+# The sweep loop. One instance per user (flock); it exits on its own when the plugin is
+# disabled or removed, and a server restart re-runs this hook without starting a second one.
+[[startup]]
+command = ["bash", "-c", "setsid -f python3 bin/autopark --daemon </dev/null >/dev/null 2>&1"]
+
+[[actions]]
+id = "setup"
+title = "Autopark: setup (config file + sidebar rows)"
+contexts = ["workspace", "pane"]
+command = ["bash", "bin/open-pane.sh", "setup"]
+
+[[actions]]
+id = "config"
+title = "Autopark: edit config"
+contexts = ["workspace", "pane"]
+command = ["bash", "bin/open-pane.sh", "config"]
+
+[[actions]]
+id = "preview"
+title = "Autopark: preview (what would be parked, and why not)"
+contexts = ["workspace", "pane"]
+command = ["bash", "bin/open-pane.sh", "preview"]
+
+[[actions]]
+id = "park-now"
+title = "Autopark: sweep now"
+contexts = ["workspace", "pane"]
+command = ["python3", "bin/autopark"]
+
+[[panes]]
+id = "setup"
+title = "Autopark setup"
+placement = "overlay"
+command = ["bash", "bin/setup.sh"]
+
+[[panes]]
+id = "config"
+title = "Autopark config"
+placement = "overlay"
+command = ["bash", "bin/setup.sh", "--edit"]
+
+[[panes]]
+id = "preview"
+title = "Autopark preview"
+placement = "overlay"
+command = ["bash", "-c", "python3 bin/autopark --dry-run; printf '\\nPress Enter to close.'; read -r _"]

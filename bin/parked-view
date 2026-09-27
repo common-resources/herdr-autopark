@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+"""Draw a still Claude-style screen for a parked pane: the transcript tail fitted to the
+terminal, then a fake prompt box. herdr-parked-wait calls it on the alternate screen, so
+there is no scrollback to scroll into.
+Usage: herdr-parked-view <session-id> <title> <parked-note>"""
+import glob, json, os, re, shutil, sys, textwrap
+
+sid, title, note = sys.argv[1:4]
+cols, rows = shutil.get_terminal_size((100, 30))
+W = max(cols - 4, 20)
+
+DIM, BOLD, RST = "\033[2m", "\033[1m", "\033[0m"
+ORANGE, GREEN, GRAY_BG = "\033[38;2;215;119;87m", "\033[38;2;78;186;101m", "\033[48;2;55;55;55m"
+TAG = re.compile(r"<(command-name)>(.*?)</\1>", re.S)
+
+
+def wrap(text, first, rest, style=""):
+    out = []
+    for para in text.strip().splitlines() or [""]:
+        for i, ln in enumerate(textwrap.wrap(para, W - 2) or [""]):
+            out.append(f"{first if not out else rest}{style}{ln}{RST if style else ''}")
+    return out
+
+
+def tool_arg(inp):
+    for k in ("description", "command", "file_path", "pattern", "query", "prompt", "url"):
+        v = inp.get(k)
+        if isinstance(v, str) and v:
+            return v.splitlines()[0]
+    return ""
+
+
+def blocks(path):
+    """Yield display blocks (list of lines), oldest first."""
+    for raw in open(path, errors="replace"):
+        try:
+            d = json.loads(raw)
+        except ValueError:
+            continue
+        if d.get("type") not in ("user", "assistant") or d.get("isMeta") or d.get("isSidechain") or d.get("isCompactSummary"):
+            continue
+        c = (d.get("message") or {}).get("content")
+        if isinstance(c, str):
+            c = [{"type": "text", "text": c}]
+        for b in c or []:
+            t = b.get("type")
+            if d["type"] == "user" and t == "text":
+                s = b["text"]
+                m = TAG.search(s)
+                if m:
+                    s = m.group(2).strip()
+                elif s.lstrip().startswith("<") or s.startswith("[Request interrupted"):
+                    continue
+                yield [""] + [f"{GRAY_BG}{ln.ljust(W + 2)}{RST}" for ln in wrap(s, "❯ ", "  ")]
+            elif t == "text":
+                yield [""] + wrap(b["text"], "⏺ ", "  ")
+            elif t == "tool_use":
+                arg = tool_arg(b.get("input") or {})
+                head = f"{GREEN}⏺{RST} {BOLD}{b.get('name', '?')}{RST}" + (f"({arg[: W - len(b.get('name', '')) - 6]})" if arg else "")
+                yield ["", head]
+            elif t == "tool_result":
+                r = b.get("content")
+                if isinstance(r, list):
+                    r = " ".join(x.get("text", "") for x in r if isinstance(x, dict))
+                first = next((ln for ln in str(r or "").splitlines() if ln.strip()), "(no output)")
+                yield [f"  {DIM}⎿  {first[: W - 6]}{RST}"]
+
+
+paths = glob.glob(os.path.expanduser(f"~/.claude/projects/*/{sid}.jsonl"))
+lines = [ln for blk in blocks(paths[0]) for ln in blk] if paths else ["", f"{DIM}(transcript not found){RST}"]
+
+rule = f"{DIM}{'─' * cols}{RST}"
+footer = [
+    "",
+    rule,
+    f"{ORANGE}❯{RST} {BOLD}Press Enter to resume{RST}",
+    rule,
+    f"  {DIM}parked by herdr-autopark · {note} · {title}{RST}"[: cols + 20],
+]
+body = lines[-max(rows - len(footer), 0):]
+# Bottom-anchor like the real UI: pad above when the transcript is short.
+screen = [""] * (rows - len(footer) - len(body)) + body + footer
+sys.stdout.write("\033[H\033[2J" + "\n".join(screen[:rows]))
+sys.stdout.flush()
