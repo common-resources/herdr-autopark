@@ -3,7 +3,12 @@
 without one, its history drawn from the session), then a fake prompt box. herdr-parked-wait calls it on the alternate screen, so
 there is no scrollback to scroll into.
 Usage: herdr-parked-view <session-id> <title> <parked-note>"""
-import os, re, shutil, sys, textwrap
+
+import os
+import re
+import shutil
+import sys
+import textwrap
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from harnesses import HARNESSES  # noqa: E402
@@ -20,7 +25,7 @@ TAG = re.compile(r"<(command-name)>(.*?)</\1>", re.S)
 def wrap(text, first, rest, style=""):
     out = []
     for para in text.strip().splitlines() or [""]:
-        for i, ln in enumerate(textwrap.wrap(para, W - 2) or [""]):
+        for ln in textwrap.wrap(para, W - 2) or [""]:
             out.append(f"{first if not out else rest}{style}{ln}{RST if style else ''}")
     return out
 
@@ -93,7 +98,7 @@ footer = [
     rule,
     f"  {DIM}parked by autopark · {note} · {title}{RST}"[: cols + 20],
 ]
-body = lines[-max(rows - len(footer), 0):]
+body = lines[-max(rows - len(footer), 0) :]
 # Bottom-anchor like the real UI: pad above when the transcript is short.
 screen = [""] * (rows - len(footer) - len(body)) + body + footer
 sys.stdout.write("\033[H\033[2J" + "\n".join(screen[:rows]))

@@ -20,6 +20,7 @@ Every check is repeated right before /exit to close the race with a user typing.
 
 Usage: autopark [--daemon] [--dry-run] [--idle-minutes N] [--only PANE_ID] [--verbose]
 """
+
 import datetime as dt
 import json
 import os
@@ -60,7 +61,9 @@ def config_path():
     if os.environ.get('AUTOPARK_CONFIG'):
         return os.environ['AUTOPARK_CONFIG']
     try:
-        d = subprocess.run(['herdr', 'plugin', 'config-dir', PLUGIN_ID], capture_output=True, text=True, timeout=10).stdout.strip()
+        d = subprocess.run(
+            ['herdr', 'plugin', 'config-dir', PLUGIN_ID], capture_output=True, text=True, timeout=10
+        ).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         d = ''
     return os.path.join(d or f'{HOME}/.config/herdr/plugins/config/{PLUGIN_ID}', 'config.toml')
@@ -176,23 +179,23 @@ def draft_text(pane_id):
     """Text typed after the last ❯ prompt. Placeholder hints are drawn faint (2) or italic (3)
     and are not a draft, so styled runs are dropped before looking."""
     screen = herdr('pane', 'read', pane_id, '--source', 'visible', '--format', 'ansi', '--lines', '40')
-    prompt_lines = [l for l in screen.splitlines() if '❯' in SGR.sub('', l)]
+    prompt_lines = [ln for ln in screen.splitlines() if '❯' in SGR.sub('', ln)]
     if not prompt_lines:
         return '?no-input-box'
-    return typed_text(prompt_lines[-1][prompt_lines[-1].index('❯') + 1:])
+    return typed_text(prompt_lines[-1][prompt_lines[-1].index('❯') + 1 :])
 
 
 def typed_text(line):
     """ANSI line after the prompt glyph, minus faint/italic placeholder runs."""
     parts = SGR.split(line)  # text, codes, text, codes, ...
     kept, hint = [parts[0]], False
-    for codes, text in zip(parts[1::2], parts[2::2]):
+    for codes, text in zip(parts[1::2], parts[2::2], strict=True):
         nums = [int(c) for c in codes.split(';') if c.isdigit()] or [0]
         i = 0
         while i < len(nums):
             n = nums[i]
             if n in (38, 48, 58):  # extended color: skip its 5;n or 2;r;g;b operands
-                i += 2 if nums[i + 1:i + 2] == [5] else 4
+                i += 2 if nums[i + 1 : i + 2] == [5] else 4
                 continue
             if n == 0 or n in (22, 23):
                 hint = False
@@ -283,9 +286,21 @@ def park(a, facts):
         log(f'snapshot failed for {pane}, parked view will draw the history instead: {e}')
         snapshot = None
     cmd = waiter_command(h.kind, sid, cwd, title, note, relaunch, snapshot)
-    json.dump({'pane': pane, 'kind': h.kind, 'sid': sid, 'cwd': cwd, 'title': title, 'relaunch': relaunch, 'note': note,
-               'idle_min': facts['idle_min'], 'parked_at': dt.datetime.now().isoformat(timespec='seconds')},
-              open(f'{STATE_DIR}/parked/{sid}.json', 'w'), indent=2)
+    json.dump(
+        {
+            'pane': pane,
+            'kind': h.kind,
+            'sid': sid,
+            'cwd': cwd,
+            'title': title,
+            'relaunch': relaunch,
+            'note': note,
+            'idle_min': facts['idle_min'],
+            'parked_at': dt.datetime.now().isoformat(timespec='seconds'),
+        },
+        open(f'{STATE_DIR}/parked/{sid}.json', 'w'),
+        indent=2,
+    )
     # Typed rather than pasted: some harnesses (Hermes) leave a pasted line unsent.
     herdr('pane', 'send-text', pane, '/exit')
     time.sleep(0.5)
@@ -341,6 +356,7 @@ def daemon():
     exits when the plugin is disabled or removed, or when the herdr server stays unreachable."""
     global CFG, IDLE_MINUTES, BENIGN_CHILD
     import fcntl
+
     os.makedirs(STATE_DIR, exist_ok=True)
     lock = open(f'{STATE_DIR}/daemon.lock', 'a+')  # not 'w': a losing instance must not wipe the pid
     try:
@@ -360,7 +376,10 @@ def daemon():
         if enabled:
             # Re-read each sweep so config edits apply without a restart.
             CFG = load_config()
-            IDLE_MINUTES, BENIGN_CHILD = CFG['idle_minutes'], re.compile('|'.join([BENIGN_DEFAULT, *CFG['extra_benign_children']]))
+            IDLE_MINUTES, BENIGN_CHILD = (
+                CFG['idle_minutes'],
+                re.compile('|'.join([BENIGN_DEFAULT, *CFG['extra_benign_children']])),
+            )
             try:
                 main()
             except Exception as e:  # keep the loop alive; the next sweep retries

@@ -9,6 +9,8 @@ An adapter answers five questions for one herdr agent kind:
   relaunch       the argv that resumes the session
 Display blocks: ('user', text) ('assistant', text) ('tool', name, arg) ('result', first_line).
 """
+
+import contextlib
 import datetime as dt
 import glob
 import json
@@ -72,7 +74,7 @@ class ClaudeCode:
         size = os.path.getsize(path)
         with open(path, 'rb') as f:
             f.seek(max(0, size - TAIL_BYTES))
-            lines = f.read().decode(errors='replace').splitlines()[1 if size > TAIL_BYTES else 0:]
+            lines = f.read().decode(errors='replace').splitlines()[1 if size > TAIL_BYTES else 0 :]
         last_msg, pending, crons = None, [], {}
         for line in lines:
             try:
@@ -162,14 +164,19 @@ class Hermes:
             if flag in argv[:-1]:
                 return argv[argv.index(flag) + 1]  # a resumed session keeps its old started_at
         from_proc = _proc_start(pid) - 5
-        rows = self._q("select id from sessions where source='cli' and ended_at is null and cwd=? and started_at>=?", cwd, from_proc)
+        rows = self._q(
+            "select id from sessions where source='cli' and ended_at is null and cwd=? and started_at>=?", cwd, from_proc
+        )
         return rows[0][0] if len(rows) == 1 else None
 
     def activity(self, sid, since_epoch):
         last = self._q("select max(timestamp) from messages where session_id=? and role in ('user','assistant')", sid)[0][0]
         pending = []
-        if self._q("select 1 from async_delegations where ? in (origin_session_id, parent_session_id, origin_session) "
-                   "and (completed_at is null or delivery_state='pending') limit 1", sid):
+        if self._q(
+            "select 1 from async_delegations where ? in (origin_session_id, parent_session_id, origin_session) "
+            "and (completed_at is null or delivery_state='pending') limit 1",
+            sid,
+        ):
             pending.append('delegation')
         try:
             procs = json.load(open(self.processes))
@@ -200,7 +207,7 @@ class Hermes:
     def relaunch(self, argv, sid):
         # argv is `python .../bin/hermes <args>`; keep what follows the entry script.
         start = next((i for i, a in enumerate(argv) if os.path.basename(a) == 'hermes'), 0)
-        rest = _strip_flags(argv[start + 1:], ('--resume', '-r'), (), ('--continue', '-c'))
+        rest = _strip_flags(argv[start + 1 :], ('--resume', '-r'), (), ('--continue', '-c'))
         return ['hermes', *rest, '--resume', sid]
 
 
@@ -208,10 +215,8 @@ def _newest_mtime(dirpath):
     newest = 0
     for root, _, files in os.walk(dirpath):
         for fn in files:
-            try:
+            with contextlib.suppress(OSError):
                 newest = max(newest, os.path.getmtime(os.path.join(root, fn)))
-            except OSError:
-                pass
     return newest
 
 
