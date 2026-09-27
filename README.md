@@ -9,7 +9,7 @@ A plugin for [herdr](https://herdr.dev), the terminal workspace for coding agent
 [![GitHub stars](https://img.shields.io/github/stars/0xKrauser/herdr-autopark?style=flat&logo=github&color=f9e2af)](https://github.com/0xKrauser/herdr-autopark/stargazers)
 [![License: MIT](https://img.shields.io/badge/license-MIT-74c7ec)](LICENSE)
 ![herdr 0.7.5+](https://img.shields.io/badge/herdr-0.7.5%2B-6E56CF)
-![platform: linux](https://img.shields.io/badge/platform-linux-lightgrey)
+![platform: linux, macOS planned](https://img.shields.io/badge/platform-linux%20%C2%B7%20macOS%20planned-lightgrey)
 ![python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)
 
 <img src="docs/parked.png" alt="A herdr window: the sidebar lists a parked agent in blue with the note '4.1d idle, parked 23:34', and its pane shows the last part of the conversation above a 'Press Enter to resume' prompt" width="860">
@@ -132,6 +132,11 @@ Some herdr behavior shaped the design, in case you build something similar:
 
 These are planned, roughly in order. None of them are built yet.
 
+**macOS**
+
+- [ ] Replace the `/proc` reads (finding the agent process, its children, working directory and start time) with `ps` and `lsof`
+- [ ] Declare `macos` in the plugin manifest once a real park and resume has been tested on a Mac
+
 **More agents**
 
 - [ ] Codex, OpenCode, Gemini CLI and Pi adapters (see the table above)
@@ -147,15 +152,14 @@ These are planned, roughly in order. None of them are built yet.
 - [ ] Delete park records and screen captures once their pane is resumed or closed
 - [ ] Optional herdr toast when something is parked
 
-**Reach and upkeep**
+**Upkeep**
 
-- [ ] macOS support: swap the `/proc` reads for `ps` and `lsof`
 - [ ] Run the self-check in CI on every push
 - [ ] Warn in `autopark.setup` when an agent's herdr integration is missing, since that is where the session id and state come from
 
 ## Like it?
 
-If Autopark gave you back a few gigabytes, please [star the repo](https://github.com/0xKrauser/herdr-autopark) ⭐. Stars help other herdr users find it, and they tell me it's worth adding more (more agents, macOS support). Issues and pull requests are welcome too.
+If Autopark gave you back a few gigabytes, please [star the repo](https://github.com/0xKrauser/herdr-autopark) ⭐. Stars help other herdr users find it, and they tell me it's worth adding more (macOS support, more agents). Issues and pull requests are welcome too.
 
 <a href="https://star-history.com/#0xKrauser/herdr-autopark&Date">
   <picture>
