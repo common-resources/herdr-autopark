@@ -6,7 +6,7 @@
 
 A plugin for [herdr](https://herdr.dev), the terminal workspace for coding agents.
 
-[![GitHub stars](https://img.shields.io/github/stars/0xKrauser/herdr-autopark?style=flat&logo=github&color=f9e2af)](https://github.com/0xKrauser/herdr-autopark/stargazers)
+[![GitHub stars](https://img.shields.io/github/stars/common-resources/herdr-autopark?style=flat&logo=github&color=f9e2af)](https://github.com/common-resources/herdr-autopark/stargazers)
 [![License: MIT](https://img.shields.io/badge/license-MIT-74c7ec)](LICENSE)
 ![herdr 0.7.5+](https://img.shields.io/badge/herdr-0.7.5%2B-6E56CF)
 ![platform: linux, macOS planned](https://img.shields.io/badge/platform-linux%20%C2%B7%20macOS%20planned-lightgrey)
@@ -25,7 +25,7 @@ Autopark checks every ten minutes and parks each agent that has been quiet for a
 ## Install
 
 ```sh
-herdr plugin install 0xKrauser/herdr-autopark
+herdr plugin install common-resources/herdr-autopark
 herdr plugin action invoke autopark.setup
 ```
 
@@ -167,12 +167,12 @@ The only requirement is [uv](https://docs.astral.sh/uv/): the linters run throug
 
 ## Like it?
 
-If Autopark gave you back a few gigabytes, please [star the repo](https://github.com/0xKrauser/herdr-autopark) ⭐. Stars help other herdr users find it, and they tell me it's worth adding more (macOS support, more agents). Issues and pull requests are welcome too.
+If Autopark gave you back a few gigabytes, please [star the repo](https://github.com/common-resources/herdr-autopark) ⭐. Stars help other herdr users find it, and they tell me it's worth adding more (macOS support, more agents). Issues and pull requests are welcome too.
 
-<a href="https://star-history.com/#0xKrauser/herdr-autopark&Date">
+<a href="https://star-history.com/#common-resources/herdr-autopark&Date">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=0xKrauser/herdr-autopark&type=Date&theme=dark" />
-    <img alt="Star history chart" src="https://api.star-history.com/svg?repos=0xKrauser/herdr-autopark&type=Date" width="600" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=common-resources/herdr-autopark&type=Date&theme=dark" />
+    <img alt="Star history chart" src="https://api.star-history.com/svg?repos=common-resources/herdr-autopark&type=Date" width="600" />
   </picture>
 </a>
 
