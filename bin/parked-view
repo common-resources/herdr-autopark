@@ -75,7 +75,7 @@ footer = [
     rule,
     f"{ORANGE}❯{RST} {BOLD}Press Enter to resume{RST}",
     rule,
-    f"  {DIM}parked by herdr-autopark · {note} · {title}{RST}"[: cols + 20],
+    f"  {DIM}parked by autopark · {note} · {title}{RST}"[: cols + 20],
 ]
 body = lines[-max(rows - len(footer), 0):]
 # Bottom-anchor like the real UI: pad above when the transcript is short.
