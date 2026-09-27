@@ -35,12 +35,25 @@ To hack on it, clone the repo and use `herdr plugin link <path>`, which runs the
 
 ## Supported agents
 
-| Agent | herdr kind | Session history | Resumes with |
-| --- | --- | --- | --- |
-| [Claude Code](https://claude.com/claude-code) | `claude` | `~/.claude/projects/*/<session>.jsonl` | `claude <flags> --resume <id>` |
-| [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `hermes` | `~/.hermes/state.db` | `hermes <flags> --resume <id>` |
+| Agent | herdr kind | Status | Session history | Resumes with |
+| --- | --- | --- | --- | --- |
+| [Claude Code](https://claude.com/claude-code) | `claude` | ✅ supported | `~/.claude/projects/*/<session>.jsonl` | `claude <flags> --resume <id>` |
+| [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `hermes` | ✅ supported | `~/.hermes/state.db` | `hermes <flags> --resume <id>` |
+| [Codex CLI](https://github.com/openai/codex) | `codex` | 🗺️ next | | |
+| [OpenCode](https://opencode.ai) | `opencode` | 🗺️ next | | |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `gemini` | 🗺️ next | | |
+| [Pi](https://github.com/badlogic/pi-mono) | `pi` | 🗺️ next | | |
+| Copilot CLI, Cursor Agent, Amp, Droid, Kimi, Qwen Code, Grok and the other kinds herdr detects | | 💭 later | | |
 
-Other agents herdr detects are left alone. Each harness is one small class in [`bin/harnesses.py`](bin/harnesses.py) that answers five questions: its process name, its session id, when it was last active (and whether anything is still pending), its conversation for the parked view, and the command that resumes it. Pull requests for Codex, OpenCode, Gemini CLI, Pi and the rest are very welcome.
+Agents without an adapter are left alone. Each one is a small class in [`bin/harnesses.py`](bin/harnesses.py) that answers five questions:
+
+1. What is its process called?
+2. Which session is it on? (herdr often reports this; otherwise the adapter looks it up.)
+3. When was it last active, and is anything still pending, like a scheduled wakeup or a background job?
+4. What does the conversation look like? (Only used when the screen capture is missing.)
+5. Which command resumes it?
+
+The rows marked "next" are the ones worth doing first. Each needs someone to check where the agent keeps its sessions and how it resumes one, and then a real park and resume in herdr. Pull requests are welcome, and so are issues that just say "I'd use this with X".
 
 ## What you get
 
@@ -114,6 +127,31 @@ Some herdr behavior shaped the design, in case you build something similar:
 - A custom `--source` needs the `custom:` prefix.
 - herdr's Hermes integration may not report a session id, so the Hermes adapter looks it up in `state.db` (by working directory and process start, or the `--resume` argument).
 - Hermes leaves a pasted line unsent, so `/exit` is typed and followed by Enter rather than pasted.
+
+## Roadmap
+
+These are planned, roughly in order. None of them are built yet.
+
+**More agents**
+
+- [ ] Codex, OpenCode, Gemini CLI and Pi adapters (see the table above)
+- [ ] A short guide in the repo for writing an adapter, with a checklist for the live park-and-resume test
+
+**Quality of life**
+
+- [ ] Show how much memory each park freed, in the log and in the parked pane's note (`1.9 GB freed`)
+- [ ] `autopark.resume-all` action, and `autopark.park` to park the focused pane right away
+- [ ] Optionally resume when the pane gets focus, instead of waiting for Enter
+- [ ] Per-workspace idle thresholds, so a scratch workspace can park sooner than the main one
+- [ ] Redraw from the session history when the pane is resized to a very different size, instead of cropping the capture
+- [ ] Delete park records and screen captures once their pane is resumed or closed
+- [ ] Optional herdr toast when something is parked
+
+**Reach and upkeep**
+
+- [ ] macOS support: swap the `/proc` reads for `ps` and `lsof`
+- [ ] Run the self-check in CI on every push
+- [ ] Warn in `autopark.setup` when an agent's herdr integration is missing, since that is where the session id and state come from
 
 ## Like it?
 
