@@ -31,8 +31,11 @@ trap leave EXIT
 printf '\033]0;parked · %s\007' "$title"
 extra=(--state idle --agent-session-id "$sid")
 rep report-agent
-extra=(--state-label idle=parked --token "parked=$note")
-rep report-metadata
+label() {
+  extra=(--state-label idle=parked --token "parked=$note")
+  rep report-metadata
+}
+label
 
 cd "$cwd" || exit 1
 # Echo stays off for the whole wait (read -s only mutes while a read is pending, so wheel
@@ -49,10 +52,14 @@ fi
 trap draw WINCH
 draw
 # Only Enter resumes; a wheel or arrow key sends escape bytes, which are swallowed here.
+# herdr's own idle timer rewrites the idle label ("idle 42m"), so put "parked" back every minute.
 while :; do
-  IFS= read -rsn1 k
+  IFS= read -rsn1 -t 60 k
   rc=$?
-  ((rc > 128)) && continue # read interrupted by WINCH
+  if ((rc > 128)); then # timeout or WINCH
+    label
+    continue
+  fi
   ((rc != 0)) && exit 0
   [[ -z $k ]] && break
 done

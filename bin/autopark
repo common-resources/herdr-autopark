@@ -214,7 +214,7 @@ def excluded():
 def evaluate(a, excl):
     """Return (reason_to_skip or None, facts)."""
     pane = a['pane_id']
-    if (a.get('state_labels') or {}).get('idle') == 'parked':
+    if a.get('agent') == 'parked' or (a.get('state_labels') or {}).get('idle') == 'parked':
         return 'already parked', {}
     h = HARNESSES.get(a.get('agent'))
     if not h:
