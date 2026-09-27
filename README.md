@@ -6,6 +6,7 @@
 
 A plugin for [herdr](https://herdr.dev), the terminal workspace for coding agents.
 
+[![GitHub stars](https://img.shields.io/github/stars/0xKrauser/herdr-autopark?style=flat&logo=github&color=f9e2af)](https://github.com/0xKrauser/herdr-autopark/stargazers)
 [![License: MIT](https://img.shields.io/badge/license-MIT-74c7ec)](LICENSE)
 ![herdr 0.7.5+](https://img.shields.io/badge/herdr-0.7.5%2B-6E56CF)
 ![platform: linux](https://img.shields.io/badge/platform-linux-lightgrey)
@@ -102,6 +103,17 @@ Some herdr behavior shaped the design, in case you build something similar:
 - herdr accepts `pane report-agent` only from inside the pane, and silently ignores it from anywhere else. That's why the waiting script in the pane registers itself.
 - A custom report that claims agent `claude` is refused in a pane where the real Claude integration ran. Other labels work, which is why parked panes report as `parked`.
 - A custom `--source` needs the `custom:` prefix.
+
+## Like it?
+
+If Autopark gave you back a few gigabytes, please [**star the repo**](https://github.com/0xKrauser/herdr-autopark) ⭐. Stars help other herdr users find it, and they tell me it's worth adding more (other agents besides Claude, macOS support). Issues and pull requests are welcome too.
+
+<a href="https://star-history.com/#0xKrauser/herdr-autopark&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=0xKrauser/herdr-autopark&type=Date&theme=dark" />
+    <img alt="Star history chart" src="https://api.star-history.com/svg?repos=0xKrauser/herdr-autopark&type=Date" width="600" />
+  </picture>
+</a>
 
 ## License
 
