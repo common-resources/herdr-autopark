@@ -2,7 +2,7 @@
 
 # Autopark
 
-**Idle Claude Code agents give their RAM back. The conversation stays on screen, and Enter resumes it.**
+**Idle coding agents give their RAM back. The conversation stays on screen, and Enter resumes it.**
 
 A plugin for [herdr](https://herdr.dev), the terminal workspace for coding agents.
 
@@ -18,7 +18,7 @@ A plugin for [herdr](https://herdr.dev), the terminal workspace for coding agent
 
 ## Why
 
-An agent you left open three days ago still holds about **1.8 GB**: Claude itself plus every MCP server it started. Keep ten tabs open and that adds up to a sizeable share of your machine, all spent on conversations you might come back to.
+An agent you left open three days ago still holds its memory: a Claude Code session with its MCP servers sits around 1.8 GB. Keep ten tabs open and that adds up to a sizeable share of your machine, all spent on conversations you might come back to.
 
 Autopark checks every ten minutes and parks each agent that has been quiet for an hour. The process exits and its memory is freed. The pane stays put, with the conversation still showing, and one keypress brings it back on the same session, with the same flags and in the same directory.
 
@@ -33,13 +33,22 @@ The background loop starts with the herdr server, so restart herdr once after in
 
 To hack on it, clone the repo and use `herdr plugin link <path>`, which runs the plugin from your checkout.
 
+## Supported agents
+
+| Agent | herdr kind | Session history | Resumes with |
+| --- | --- | --- | --- |
+| [Claude Code](https://claude.com/claude-code) | `claude` | `~/.claude/projects/*/<session>.jsonl` | `claude <flags> --resume <id>` |
+| [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `hermes` | `~/.hermes/state.db` | `hermes <flags> --resume <id>` |
+
+Other agents herdr detects are left alone. Each harness is one small class in [`bin/harnesses.py`](bin/harnesses.py) that answers five questions: its process name, its session id, when it was last active (and whether anything is still pending), its conversation for the parked view, and the command that resumes it. Pull requests for Codex, OpenCode, Gemini CLI, Pi and the rest are very welcome.
+
 ## What you get
 
-- **A still view of the conversation.** A parked pane shows the end of the transcript, drawn like Claude's screen, under a prompt box. It has no scrollback, and the wheel and arrow keys do nothing, so a stray scroll can't write into it.
-- **It stays in the sidebar.** Parked panes keep their place, tagged `parked` and colored, with a note such as `4.1d idle, parked 23:34`.
-- **Resume with Enter.** You get `claude --resume <session>` with the flags you started it with. Ctrl+C drops to a plain shell instead.
-- **Careful about what counts as idle.** When anything suggests the agent is still busy, it is left alone (see below).
-- **Settings live in one file** and apply on the next check.
+- A still view of the conversation. A parked pane shows the end of the transcript, drawn the way the agent draws it, under a prompt box. It has no scrollback, and the wheel and arrow keys do nothing, so a stray scroll can't write into it.
+- It stays in the sidebar. Parked panes keep their place, tagged `parked` and colored, with a note such as `4.1d idle, parked 23:34`.
+- Resume with Enter. The agent comes back on the same session with the flags you started it with. Ctrl+C drops to a plain shell instead.
+- Careful about what counts as idle. When anything suggests the agent is still busy, it is left alone (see below).
+- Settings live in one file and apply on the next check.
 
 ## Configure
 
@@ -81,18 +90,18 @@ Bind any of them to a key with a `[[keys.command]]` entry of `type = "plugin_act
 
 ## When an agent counts as idle
 
-Autopark reads the timestamp of the last message from you or Claude in the session transcript (`~/.claude/projects/*/<session>.jsonl`). Restarting herdr or Claude resets herdr's idle timer and touches the file, but that timestamp stays the same, so an agent that was idle before a restart is still idle after it.
+Autopark reads the timestamp of the last message from you or the agent in its own session history. Restarting herdr or the agent resets herdr's idle timer, but that timestamp stays the same, so an agent that was idle before a restart is still idle after it.
 
 It parks an agent only when all of these are true:
 
 - herdr reports it idle or done, and you're not focused on it
 - nothing was said, and no subagent or workflow file changed, within `idle_minutes`
-- no `/loop` wakeup, cron job or monitor is pending
-- Claude has no child process other than its own MCP and language servers, so a shell, dev server or test run keeps it awake
+- nothing is pending: for Claude a `/loop` wakeup, cron job, monitor or subagent; for Hermes a delegated task or background process
+- the agent has no child process other than its own MCP and language servers, so a shell, dev server or test run keeps it awake
 - the input box has no unsent draft
 - you didn't resume it from a park within `resume_grace_minutes`
 
-Every check runs again right before `/exit` is sent. If Claude is still alive 30 seconds after `/exit`, the pane is left alone.
+Every check runs again right before `/exit` is sent. If the agent is still alive 30 seconds after `/exit`, the pane is left alone.
 
 To see what it's doing, look at `~/.local/state/herdr-autopark/log`, or run `autopark.preview`.
 
@@ -103,10 +112,12 @@ Some herdr behavior shaped the design, in case you build something similar:
 - herdr accepts `pane report-agent` only from inside the pane, and silently ignores it from anywhere else. That's why the waiting script in the pane registers itself.
 - A custom report that claims agent `claude` is refused in a pane where the real Claude integration ran. Other labels work, which is why parked panes report as `parked`.
 - A custom `--source` needs the `custom:` prefix.
+- herdr's Hermes integration may not report a session id, so the Hermes adapter looks it up in `state.db` (by working directory and process start, or the `--resume` argument).
+- Hermes leaves a pasted line unsent, so `/exit` is typed and followed by Enter rather than pasted.
 
 ## Like it?
 
-If Autopark gave you back a few gigabytes, please [**star the repo**](https://github.com/0xKrauser/herdr-autopark) ⭐. Stars help other herdr users find it, and they tell me it's worth adding more (other agents besides Claude, macOS support). Issues and pull requests are welcome too.
+If Autopark gave you back a few gigabytes, please [star the repo](https://github.com/0xKrauser/herdr-autopark) ⭐. Stars help other herdr users find it, and they tell me it's worth adding more (more agents, macOS support). Issues and pull requests are welcome too.
 
 <a href="https://star-history.com/#0xKrauser/herdr-autopark&Date">
   <picture>

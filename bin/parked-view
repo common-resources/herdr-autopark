@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Draw a still Claude-style screen for a parked pane: the transcript tail fitted to the
+"""Draw a still agent-style screen for a parked pane: the transcript tail fitted to the
 terminal, then a fake prompt box. herdr-parked-wait calls it on the alternate screen, so
 there is no scrollback to scroll into.
 Usage: herdr-parked-view <session-id> <title> <parked-note>"""
-import glob, json, os, re, shutil, sys, textwrap
+import os, re, shutil, sys, textwrap
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from harnesses import HARNESSES  # noqa: E402
 
 sid, title, note = sys.argv[1:4]
 cols, rows = shutil.get_terminal_size((100, 30))
@@ -22,52 +25,29 @@ def wrap(text, first, rest, style=""):
     return out
 
 
-def tool_arg(inp):
-    for k in ("description", "command", "file_path", "pattern", "query", "prompt", "url"):
-        v = inp.get(k)
-        if isinstance(v, str) and v:
-            return v.splitlines()[0]
-    return ""
+def render(block):
+    kind = block[0]
+    if kind == 'user':
+        m = TAG.search(block[1])
+        text = m.group(2).strip() if m else block[1]
+        if not m and (text.lstrip().startswith('<') or text.startswith('[Request interrupted')):
+            return []
+        return [""] + [f"{GRAY_BG}{ln.ljust(W + 2)}{RST}" for ln in wrap(text, "❯ ", "  ")]
+    if kind == 'assistant':
+        return [""] + wrap(block[1], "⏺ ", "  ")
+    if kind == 'tool':
+        name, arg = block[1], block[2]
+        return ["", f"{GREEN}⏺{RST} {BOLD}{name}{RST}" + (f"({arg[: W - len(name) - 6]})" if arg else "")]
+    return [f"  {DIM}⎿  {block[1][: W - 6]}{RST}"]
 
 
-def blocks(path):
-    """Yield display blocks (list of lines), oldest first."""
-    for raw in open(path, errors="replace"):
-        try:
-            d = json.loads(raw)
-        except ValueError:
-            continue
-        if d.get("type") not in ("user", "assistant") or d.get("isMeta") or d.get("isSidechain") or d.get("isCompactSummary"):
-            continue
-        c = (d.get("message") or {}).get("content")
-        if isinstance(c, str):
-            c = [{"type": "text", "text": c}]
-        for b in c or []:
-            t = b.get("type")
-            if d["type"] == "user" and t == "text":
-                s = b["text"]
-                m = TAG.search(s)
-                if m:
-                    s = m.group(2).strip()
-                elif s.lstrip().startswith("<") or s.startswith("[Request interrupted"):
-                    continue
-                yield [""] + [f"{GRAY_BG}{ln.ljust(W + 2)}{RST}" for ln in wrap(s, "❯ ", "  ")]
-            elif t == "text":
-                yield [""] + wrap(b["text"], "⏺ ", "  ")
-            elif t == "tool_use":
-                arg = tool_arg(b.get("input") or {})
-                head = f"{GREEN}⏺{RST} {BOLD}{b.get('name', '?')}{RST}" + (f"({arg[: W - len(b.get('name', '')) - 6]})" if arg else "")
-                yield ["", head]
-            elif t == "tool_result":
-                r = b.get("content")
-                if isinstance(r, list):
-                    r = " ".join(x.get("text", "") for x in r if isinstance(x, dict))
-                first = next((ln for ln in str(r or "").splitlines() if ln.strip()), "(no output)")
-                yield [f"  {DIM}⎿  {first[: W - 6]}{RST}"]
-
-
-paths = glob.glob(os.path.expanduser(f"~/.claude/projects/*/{sid}.jsonl"))
-lines = [ln for blk in blocks(paths[0]) for ln in blk] if paths else ["", f"{DIM}(transcript not found){RST}"]
+h = HARNESSES.get(os.environ.get('AUTOPARK_KIND') or 'claude')
+try:
+    lines = [ln for b in h.blocks(sid) for ln in render(b)]
+except Exception as e:  # a broken history must not leave the pane blank
+    lines = ["", f"{DIM}(could not read the conversation: {e}){RST}"]
+if not lines:
+    lines = ["", f"{DIM}(conversation not found){RST}"]
 
 rule = f"{DIM}{'─' * cols}{RST}"
 footer = [

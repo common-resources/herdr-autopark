@@ -1,9 +1,9 @@
 id = "autopark"
 name = "Autopark"
-version = "0.1.0"
+version = "0.2.0"
 # [[startup]] hooks and custom agent reports need 0.7.5+; built and tested on 0.9.0.
 min_herdr_version = "0.7.5"
-description = "Park Claude Code agents idle for an hour to free their RAM; the pane keeps a still view of the conversation and Enter resumes it"
+description = "Park coding agents (Claude Code, Hermes) idle for an hour to free their RAM; the pane keeps a still view of the conversation and Enter resumes it"
 # Reads /proc to match panes to Claude processes.
 platforms = ["linux"]
 

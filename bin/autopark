@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Park idle Claude Code agents in herdr panes to free their RAM, and leave a one-keypress resume in the pane.
+"""Park idle coding agents in herdr panes to free their RAM, and leave a one-keypress resume in the pane.
 
-Park = send /exit to the agent (Claude and all its MCP servers exit), then run a small bash
-prompt in the same pane that waits for Enter and relaunches `claude <same flags> --resume <id>`.
+Park = send /exit to the agent (it and all its MCP servers exit), then run a small bash prompt
+in the same pane that waits for Enter and relaunches `<agent> <same flags> --resume <id>`.
+Harness specifics (Claude Code, Hermes) live in harnesses.py.
 The conversation, cwd and flags come back exactly; only the processes are gone meanwhile.
 
 An agent is parked only when every check says it is truly idle. Any doubt means skip:
   - herdr state is idle/done (never working, blocked, unknown) and the pane is not focused
-  - last real user/assistant message in the transcript is older than IDLE_MINUTES. This
-    survives herdr/Claude restarts: a restart rewrites the transcript mtime and resets herdr's
+  - last real user/assistant message in the session history is older than IDLE_MINUTES. This
+    survives herdr/agent restarts: a restart rewrites the transcript mtime and resets herdr's
     idle timer, but not the message timestamps.
-  - no subagent/workflow file under the session dir changed within IDLE_MINUTES
-  - no pending ScheduleWakeup (/loop), un-deleted CronCreate, or Monitor since Claude started
-  - Claude has no child process besides known MCP/LSP servers (a background Bash task, dev
+  - nothing pending: Claude wakeups/crons/monitors/subagents, Hermes delegations/background jobs
+  - the agent has no child process besides known MCP/LSP servers (a background Bash task, dev
     server, test run or shell keeps it awake)
   - the input box holds no unsent draft
   - session id / pane id is not in the config `exclude` list (config.example.toml)
@@ -21,7 +21,6 @@ Every check is repeated right before /exit to close the race with a user typing.
 Usage: autopark [--daemon] [--dry-run] [--idle-minutes N] [--only PANE_ID] [--verbose]
 """
 import datetime as dt
-import glob
 import json
 import os
 import re
@@ -30,6 +29,9 @@ import subprocess
 import sys
 import time
 import tomllib
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from harnesses import HARNESSES  # noqa: E402
 
 HOME = os.path.expanduser('~')
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -52,7 +54,6 @@ BENIGN_DEFAULT = (
     r'|typescript-language-server|tsserver|rust-analyzer|vtsls|pyright|gopls'
 )
 SHELL = re.compile(r'^(\S*/)?(ba|z|fi|da)?sh\b')
-TAIL_BYTES = 3_000_000
 
 
 def config_path():
@@ -116,18 +117,22 @@ def agents():
     return json.loads(herdr('agent', 'list'))['result']['agents']
 
 
-def claude_pid_for(pane_id):
+def agent_pid_for(pane_id, procs):
+    """Topmost process of the harness in this pane (a wrapper may re-exec or fork itself)."""
+    found = {}
     for pid in filter(str.isdigit, os.listdir('/proc')):
         try:
-            if os.readlink(f'/proc/{pid}/exe').split('/')[-1] != 'claude' and \
-               open(f'/proc/{pid}/comm').read().strip() != 'claude':
+            comm = open(f'/proc/{pid}/comm').read().strip()
+            if comm not in procs and os.readlink(f'/proc/{pid}/exe').split('/')[-1] not in procs:
                 continue
             env = open(f'/proc/{pid}/environ', 'rb').read().split(b'\0')
+            ppid = int(open(f'/proc/{pid}/stat').read().rsplit(')', 1)[1].split()[1])
         except OSError:
             continue
         if f'HERDR_PANE_ID={pane_id}'.encode() in env:
-            return int(pid)
-    return None
+            found[int(pid)] = ppid
+    tops = [p for p, pp in found.items() if pp not in found]
+    return tops[0] if len(tops) == 1 else None
 
 
 def proc_start_epoch(pid):
@@ -155,7 +160,7 @@ def busy_children(pid):
                 cmd = open(f'/proc/{child}/cmdline', 'rb').read().replace(b'\0', b' ').decode(errors='replace').strip()
             except OSError:
                 continue
-            # Only Claude's own direct children can be servers; a shell is always work in flight,
+            # Only the agent's own direct children can be servers; a shell is always work in flight,
             # even when its command line happens to mention "mcp".
             if parent == pid and not SHELL.match(cmd) and BENIGN_CHILD.search(cmd):
                 continue
@@ -164,64 +169,39 @@ def busy_children(pid):
     return busy
 
 
-def parse_ts(s):
-    return dt.datetime.fromisoformat(s.replace('Z', '+00:00')).timestamp()
-
-
-def transcript_facts(path, since_epoch):
-    """Last real message time, and whether a wakeup/cron/monitor is still pending."""
-    size = os.path.getsize(path)
-    with open(path, 'rb') as f:
-        f.seek(max(0, size - TAIL_BYTES))
-        lines = f.read().decode(errors='replace').splitlines()[1 if size > TAIL_BYTES else 0:]
-    last_msg, pending, crons = None, [], {}
-    for line in lines:
-        try:
-            o = json.loads(line)
-        except ValueError:
-            continue
-        if o.get('type') not in ('user', 'assistant') or o.get('isMeta') or not o.get('timestamp'):
-            continue
-        ts = parse_ts(o['timestamp'])
-        last_msg = ts
-        if o['type'] != 'assistant' or ts < since_epoch:
-            continue
-        for c in (o.get('message') or {}).get('content') or []:
-            if not isinstance(c, dict) or c.get('type') != 'tool_use':
-                continue
-            name, inp = c.get('name'), c.get('input') or {}
-            if name == 'ScheduleWakeup':
-                pending = [] if inp.get('stop') else [('wakeup', ts + float(inp.get('delaySeconds') or 0))]
-            elif name == 'CronCreate':
-                crons[c.get('id')] = ts
-            elif name == 'CronDelete':
-                crons.clear()  # ids differ from tool_use ids; any delete after a create is treated as teardown
-            elif name == 'Monitor':
-                pending.append(('monitor', float('inf')))
-    now = time.time()
-    live = [kind for kind, until in pending if until > now - 600]
-    if crons:
-        live.append('cron')
-    return last_msg, live
-
-
-def newest_mtime(dirpath):
-    newest = 0
-    for root, _, files in os.walk(dirpath):
-        for fn in files:
-            try:
-                newest = max(newest, os.path.getmtime(os.path.join(root, fn)))
-            except OSError:
-                pass
-    return newest
+SGR = re.compile(r'\x1b\[([0-9;]*)m')
 
 
 def draft_text(pane_id):
-    screen = herdr('pane', 'read', pane_id, '--source', 'detection', '--lines', '40')
-    prompt_lines = [l for l in screen.splitlines() if l.lstrip().startswith('❯')]
+    """Text typed after the last ❯ prompt. Placeholder hints are drawn faint (2) or italic (3)
+    and are not a draft, so styled runs are dropped before looking."""
+    screen = herdr('pane', 'read', pane_id, '--source', 'visible', '--format', 'ansi', '--lines', '40')
+    prompt_lines = [l for l in screen.splitlines() if '❯' in SGR.sub('', l)]
     if not prompt_lines:
         return '?no-input-box'
-    return prompt_lines[-1].lstrip()[1:].strip()
+    return typed_text(prompt_lines[-1][prompt_lines[-1].index('❯') + 1:])
+
+
+def typed_text(line):
+    """ANSI line after the prompt glyph, minus faint/italic placeholder runs."""
+    parts = SGR.split(line)  # text, codes, text, codes, ...
+    kept, hint = [parts[0]], False
+    for codes, text in zip(parts[1::2], parts[2::2]):
+        nums = [int(c) for c in codes.split(';') if c.isdigit()] or [0]
+        i = 0
+        while i < len(nums):
+            n = nums[i]
+            if n in (38, 48, 58):  # extended color: skip its 5;n or 2;r;g;b operands
+                i += 2 if nums[i + 1:i + 2] == [5] else 4
+                continue
+            if n == 0 or n in (22, 23):
+                hint = False
+            elif n in (2, 3):
+                hint = True
+            i += 1
+        if not hint:
+            kept.append(text)
+    return ''.join(kept).strip()
 
 
 def excluded():
@@ -230,38 +210,36 @@ def excluded():
 
 def evaluate(a, excl):
     """Return (reason_to_skip or None, facts)."""
-    pane, sid = a['pane_id'], (a.get('agent_session') or {}).get('value')
-    if a.get('agent') != 'claude':
-        return 'not claude', {}
+    pane = a['pane_id']
     if (a.get('state_labels') or {}).get('idle') == 'parked':
         return 'already parked', {}
+    h = HARNESSES.get(a.get('agent'))
+    if not h:
+        return f"unsupported agent {a.get('agent')}", {}
     if a.get('agent_status') not in ('idle', 'done'):
         return f"state {a.get('agent_status')}", {}
     if a.get('focused'):
         return 'focused', {}
+    pid = agent_pid_for(pane, h.procs)
+    if not pid:
+        return f'{h.kind} pid not found', {}
+    cwd = os.readlink(f'/proc/{pid}/cwd')
+    sid = h.session_id(a, pid, cwd)
     if not sid:
         return 'no session id', {}
     if sid in excl or pane in excl:
         return 'excluded', {}
-    tx = glob.glob(f'{HOME}/.claude/projects/*/{sid}.jsonl')
-    if not tx:
-        return 'no transcript', {}
-    pid = claude_pid_for(pane)
-    if not pid:
-        return 'claude pid not found', {}
     started = proc_start_epoch(pid)
     # A pane this script parked and the user then resumed gets a full idle window from the
-    # resume, even if they only looked. A herdr/Claude restart earns no such grace.
+    # resume, even if they only looked. A herdr/agent restart earns no such grace.
     rec = f'{STATE_DIR}/parked/{sid}.json'
     if os.path.exists(rec) and started > os.path.getmtime(rec) and time.time() - started < CFG['resume_grace_minutes'] * 60:
         return f'resumed from park {(time.time() - started) / 60:.0f}m ago', {}
-    last_msg, pending = transcript_facts(tx[0], started)
-    if not last_msg:
+    last_act, pending = h.activity(sid, started)
+    if not last_act:
         return 'no messages', {}
-    sub = newest_mtime(tx[0][:-6])  # <sid>/ dir: subagents, workflows
-    last_act = max(last_msg, sub)
     idle_min = (time.time() - last_act) / 60
-    facts = {'pid': pid, 'transcript': tx[0], 'idle_min': round(idle_min), 'sid': sid}
+    facts = {'pid': pid, 'cwd': cwd, 'idle_min': round(idle_min), 'sid': sid, 'harness': h}
     if idle_min < IDLE_MINUTES:
         return f'active {idle_min:.0f}m ago', facts
     if pending:
@@ -275,55 +253,40 @@ def evaluate(a, excl):
     return None, facts
 
 
-def relaunch_argv(pid, sid):
-    """Claude's own argv with any old --resume/--continue dropped and --resume <sid> appended."""
-    argv = open(f'/proc/{pid}/cmdline', 'rb').read().decode().split('\0')[:-1]
-    out, skip = [], False
-    for x in argv[1:]:
-        if skip:
-            skip = False
-            continue
-        if x in ('--resume', '-r', '--session-id'):
-            skip = True
-            continue
-        if x in ('--continue', '-c') or x.startswith('--resume='):
-            continue
-        out.append(x)
-    return ['claude', *out, '--resume', sid]
-
-
 def idle_note(idle_min):
     h = idle_min / 60
     span = f'{h / 24:.1f}d' if h >= 48 else f'{h:.0f}h'
     return f'{span} idle, parked {dt.datetime.now():%H:%M}'
 
 
-def waiter_command(sid, cwd, title, note, relaunch):
-    env = [] if CFG['show_transcript'] else ['AUTOPARK_PLAIN=1']
+def waiter_command(kind, sid, cwd, title, note, relaunch):
+    env = [f'AUTOPARK_KIND={kind}'] + ([] if CFG['show_transcript'] else ['AUTOPARK_PLAIN=1'])
     return ' '.join(shlex.quote(x) for x in [*env, WAITER, sid, cwd, title, note, *relaunch])
 
 
 def park(a, facts):
-    pane, pid, sid = a['pane_id'], facts['pid'], facts['sid']
-    cwd = os.readlink(f'/proc/{pid}/cwd')
+    pane, pid, sid, cwd, h = a['pane_id'], facts['pid'], facts['sid'], facts['cwd'], facts['harness']
     title = a.get('terminal_title_stripped') or sid
-    relaunch = relaunch_argv(pid, sid)
+    relaunch = h.relaunch(open(f'/proc/{pid}/cmdline', 'rb').read().decode().split('\0')[:-1], sid)
     note = idle_note(facts['idle_min'])
-    cmd = waiter_command(sid, cwd, title, note, relaunch)
+    cmd = waiter_command(h.kind, sid, cwd, title, note, relaunch)
     if DRY or CFG['dry_run']:
         log(f'WOULD PARK {pane} {title!r} idle={facts["idle_min"]}m -> {shlex.join(relaunch)}')
         return
     os.makedirs(f'{STATE_DIR}/parked', exist_ok=True)
-    json.dump({'pane': pane, 'sid': sid, 'cwd': cwd, 'title': title, 'relaunch': relaunch, 'note': note,
+    json.dump({'pane': pane, 'kind': h.kind, 'sid': sid, 'cwd': cwd, 'title': title, 'relaunch': relaunch, 'note': note,
                'idle_min': facts['idle_min'], 'parked_at': dt.datetime.now().isoformat(timespec='seconds')},
               open(f'{STATE_DIR}/parked/{sid}.json', 'w'), indent=2)
-    herdr('agent', 'prompt', pane, '/exit')
+    # Typed rather than pasted: some harnesses (Hermes) leave a pasted line unsent.
+    herdr('pane', 'send-text', pane, '/exit')
+    time.sleep(0.5)
+    herdr('pane', 'send-keys', pane, 'enter')
     for _ in range(60):
         if not os.path.exists(f'/proc/{pid}'):
             break
         time.sleep(0.5)
     else:
-        log(f'PARK ABORTED {pane} {title!r}: claude pid {pid} still alive 30s after /exit; left untouched')
+        log(f'PARK ABORTED {pane} {title!r}: {h.kind} pid {pid} still alive 30s after /exit; left untouched')
         return
     time.sleep(1)  # let the pane shell redraw its prompt before typing into it
     herdr('pane', 'run', pane, cmd)
@@ -370,11 +333,12 @@ def daemon():
     global CFG, IDLE_MINUTES, BENIGN_CHILD
     import fcntl
     os.makedirs(STATE_DIR, exist_ok=True)
-    lock = open(f'{STATE_DIR}/daemon.lock', 'w')
+    lock = open(f'{STATE_DIR}/daemon.lock', 'a+')  # not 'w': a losing instance must not wipe the pid
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         return  # already running (server restart, live handoff)
+    lock.truncate(0)
     lock.write(str(os.getpid()))
     lock.flush()
     log(f'daemon started pid={os.getpid()}')
