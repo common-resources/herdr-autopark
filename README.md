@@ -173,7 +173,7 @@ The only requirement is [uv](https://docs.astral.sh/uv/). The linters run throug
 
 ## Like it?
 
-If Autopark saved you a few gigabytes, please [star the repo](https://github.com/common-resources/herdr-autopark) ⭐. The [herdr plugin marketplace](https://herdr.dev/plugins/) ranks plugins by stars, and its Trending shelf by how fast they gain them, so each star moves Autopark up where other herdr users look for plugins. Stars also tell me it's worth adding more (macOS support, more agents). Issues and pull requests are welcome too.
+If Autopark saved you a few gigabytes, please [star the repo](https://github.com/common-resources/herdr-autopark) ⭐. Stars help other herdr users find it in the plugin marketplace, and they tell me it's worth adding more (macOS support, more agents). Issues and pull requests are welcome too.
 
 <a href="https://star-history.com/#common-resources/herdr-autopark&Date">
   <picture>
