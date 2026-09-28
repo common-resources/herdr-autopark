@@ -20,6 +20,8 @@ A plugin for [herdr](https://herdr.dev), the terminal workspace for coding agent
 
 RAM is precious nowadays. I was maxing out my 64 GB constantly with my agent fleet. If you are an agent hoarder like me and you find yourself in the same situation, this plugin might help.
 
+I keep a lot of agent tabs open at once, and most of them are waiting on something: a PR review, or a colleague's email before the next step. Closing them means digging through `claude --resume` or `/resume` later to find the right session. With autopark you keep every tab where you left it, laid out the way you like, and only the idle ones give their memory back.
+
 A Claude Code session holds 1 to 2 GB once its MCP servers are counted, and it keeps holding it while it sits idle for days. On my machine, autopark made 12 parks in its first 11 hours. At the time of writing, 6 of my 9 agent panes are parked, which gives back roughly 7 to 11 GB.
 
 Autopark checks every ten minutes and parks each agent that has been quiet for an hour. The process exits and its memory is freed. The pane stays put, with the conversation still showing, and one keypress brings it back on the same session, with the same flags and in the same directory.
