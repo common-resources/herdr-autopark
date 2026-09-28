@@ -66,4 +66,6 @@ done
 
 trap - EXIT WINCH
 leave
+# The resumed agent must not inherit the view's settings (a nested parked-view would replay them).
+unset AUTOPARK_SNAPSHOT AUTOPARK_KIND AUTOPARK_PLAIN
 exec "$@"
