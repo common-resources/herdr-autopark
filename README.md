@@ -2,7 +2,7 @@
 
 # Autopark
 
-**Parks idle coding agents to free their RAM. The conversation stays on screen and Enter resumes it.**
+**Parks idle coding agents to free their RAM. See where you left off and resume in one tap.**
 
 A plugin for [herdr](https://herdr.dev), the terminal workspace for coding agents.
 
