@@ -154,7 +154,6 @@ These are planned, roughly in order. None of them are built yet.
 - [ ] Optionally resume when the pane gets focus, instead of waiting for Enter
 - [ ] Per-workspace idle thresholds, so a scratch workspace can park sooner than the main one
 - [ ] Redraw from the session history when the pane is resized to a very different size, instead of cropping the capture
-- [ ] Delete park records and screen captures once their pane is resumed or closed
 - [ ] Optional herdr toast when something is parked
 - [ ] Cap how long subagents can keep an agent awake (`max_subagent_minutes`): past it, park anyway and stop them through the exit dialog, and show the open subagents in `autopark.preview`
 

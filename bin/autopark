@@ -21,7 +21,9 @@ Every check is repeated right before /exit to close the race with a user typing.
 Usage: autopark [--daemon] [--dry-run] [--idle-minutes N] [--only PANE_ID] [--verbose]
 """
 
+import contextlib
 import datetime as dt
+import glob
 import json
 import os
 import re
@@ -444,5 +446,24 @@ def daemon():
     log('daemon stopped')
 
 
+def forget_pane(pane):
+    """Drop the park record, screen capture and abort marker of a closed pane. Records stay
+    while the pane lives: the resume grace reads them. herdr never reuses a pane id."""
+    # ponytail: a pane moved to another workspace changes id, so its files wait for a later close
+    for rec in glob.glob(f'{STATE_DIR}/parked/*.json'):
+        try:
+            if json.load(open(rec)).get('pane') != pane:
+                continue
+        except (OSError, ValueError):
+            continue
+        for ext in ('.json', '.screen', '.abort'):
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(rec[:-5] + ext)
+        log(f'forgot {pane}: pane closed')
+
+
 if __name__ == '__main__':
-    daemon() if '--daemon' in sys.argv else main()
+    if '--pane-closed' in sys.argv:  # [[events]] pane.closed
+        forget_pane(json.loads(os.environ.get('HERDR_PLUGIN_EVENT_JSON') or '{}').get('data', {}).get('pane_id'))
+    else:
+        daemon() if '--daemon' in sys.argv else main()

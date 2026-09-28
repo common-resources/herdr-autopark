@@ -145,6 +145,18 @@ def test_crons_keep_the_session_awake_until_each_is_deleted():
             assert h.activity('s', now)[1] == [], 'crons from before the process started died with it'
 
 
+def test_closed_pane_forgets_only_its_own_park_files():
+    with tempfile.TemporaryDirectory() as d:
+        os.makedirs(f'{d}/parked')
+        for sid, pane in (('a', 'w1:p1'), ('b', 'w1:p2')):
+            json.dump({'pane': pane}, open(f'{d}/parked/{sid}.json', 'w'))
+            open(f'{d}/parked/{sid}.screen', 'w').close()
+        open(f'{d}/parked/a.abort', 'w').close()
+        AP.STATE_DIR = d
+        AP.forget_pane('w1:p1')
+        assert sorted(os.listdir(f'{d}/parked')) == ['b.json', 'b.screen']
+
+
 if __name__ == '__main__':
     tests = [f for name, f in sorted(globals().items()) if name.startswith('test_')]
     for t in tests:

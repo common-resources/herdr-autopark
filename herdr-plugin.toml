@@ -55,3 +55,8 @@ id = "preview"
 title = "Autopark preview"
 placement = "overlay"
 command = ["bash", "-c", "python3 bin/autopark --dry-run; printf '\\nPress Enter to close.'; read -r _"]
+
+# Park records and screen captures are kept while the pane lives; drop them once it closes.
+[[events]]
+on = "pane.closed"
+command = ["python3", "bin/autopark", "--pane-closed"]
