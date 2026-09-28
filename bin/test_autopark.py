@@ -1,9 +1,12 @@
 """Self-check. Runs with `python3 bin/test_autopark.py` or pytest; needs no herdr server."""
 
+import datetime as dt
+import json
 import os
 import subprocess
 import sys
 import tempfile
+import time
 import types
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -82,6 +85,64 @@ def test_exit_dialog_stops_only_idle_subagents():
         assert AP.exit_confirm_choice(DIALOG.format(extra=''))[0] == 'cancel'
     finally:
         AP.CFG['stop_idle_subagents'] = True
+
+
+def test_crons_keep_the_session_awake_until_each_is_deleted():
+    now = time.time()
+
+    def at(sec):
+        return dt.datetime.fromtimestamp(now - 3600 + sec, dt.UTC).isoformat()
+
+    def use(sec, uid, name, inp):
+        return {
+            'type': 'assistant',
+            'timestamp': at(sec),
+            'message': {'content': [{'type': 'tool_use', 'id': uid, 'name': name, 'input': inp}]},
+        }
+
+    def result(sec, uid, text, err=None):
+        return {
+            'type': 'user',
+            'timestamp': at(sec),
+            'message': {'content': [{'type': 'tool_result', 'tool_use_id': uid, 'content': text, 'is_error': err}]},
+        }
+
+    def cron_at(epoch):
+        t = dt.datetime.fromtimestamp(epoch)
+        return f'{t.minute} {t.hour} {t.day} {t.month} *'
+
+    made = [
+        use(1, 'u1', 'CronCreate', {'cron': '7 * * * *'}),
+        result(2, 'u1', 'Scheduled recurring job aaaa1111 (Every hour at :07). Session-only'),
+        use(3, 'u2', 'CronCreate', {'cron': '9 * * * *'}),
+        result(4, 'u2', 'Scheduled recurring job bbbb2222 (Every hour at :09). Session-only'),
+        use(5, 'u3', 'CronCreate', {'cron': '1 2 3 4 *', 'recurring': False}),
+        result(6, 'u3', 'Error: bad cron', True),
+    ]
+    one_shot = [
+        use(1, 'u4', 'CronCreate', {'cron': cron_at(now + 7200), 'recurring': False}),
+        result(2, 'u4', 'Scheduled one-shot task cccc3333 (...). Session-only'),
+    ]
+    past = [
+        use(1, 'u5', 'CronCreate', {'cron': cron_at(now - 3000), 'recurring': False}),  # fired 50 min ago
+        result(2, 'u5', 'Scheduled one-shot task dddd4444 (...)'),
+    ]
+    cases = [
+        (made, ['cron']),
+        (made + [use(7, 'u6', 'CronDelete', {'id': 'aaaa1111'})], ['cron']),  # one of two deleted
+        (made + [use(7, 'u6', 'CronDelete', {'id': 'aaaa1111'}), use(8, 'u7', 'CronDelete', {'id': 'bbbb2222'})], []),
+        (one_shot, ['cron']),
+        (past, []),
+    ]
+    h = ClaudeCode()
+    with tempfile.TemporaryDirectory() as d:
+        for rows, want in cases:
+            path = f'{d}/s.jsonl'
+            with open(path, 'w') as f:
+                f.write('\n'.join(json.dumps(r) for r in rows) + '\n')
+            h._transcript = lambda sid, p=path: p
+            assert h.activity('s', now - 7200)[1] == want, (rows[-1], want)
+            assert h.activity('s', now)[1] == [], 'crons from before the process started died with it'
 
 
 if __name__ == '__main__':

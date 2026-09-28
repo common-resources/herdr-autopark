@@ -15,6 +15,7 @@ import datetime as dt
 import glob
 import json
 import os
+import re
 import sqlite3
 import time
 
@@ -75,33 +76,44 @@ class ClaudeCode:
         with open(path, 'rb') as f:
             f.seek(max(0, size - TAIL_BYTES))
             lines = f.read().decode(errors='replace').splitlines()[1 if size > TAIL_BYTES else 0 :]
-        last_msg, pending, crons = None, [], {}
+        last_msg, pending = None, []
+        creates, crons = {}, {}  # CronCreate tool_use id -> (ts, input); job id -> expiry
         for line in lines:
             try:
                 o = json.loads(line)
             except ValueError:
                 continue
-            if o.get('type') not in ('user', 'assistant') or o.get('isMeta') or not o.get('timestamp'):
+            if o.get('type') not in ('user', 'assistant') or not o.get('timestamp'):
                 continue
             ts = dt.datetime.fromisoformat(o['timestamp'].replace('Z', '+00:00')).timestamp()
-            last_msg = ts
-            if o['type'] != 'assistant' or ts < since_epoch:
+            if not o.get('isMeta'):
+                last_msg = ts
+            # Crons, wakeups and monitors live in the process, so older ones died with it.
+            if ts < since_epoch:
                 continue
             for c in (o.get('message') or {}).get('content') or []:
-                if not isinstance(c, dict) or c.get('type') != 'tool_use':
+                if not isinstance(c, dict):
+                    continue
+                if c.get('type') == 'tool_result' and c.get('tool_use_id') in creates:
+                    made = creates.pop(c['tool_use_id'])
+                    if not c.get('is_error'):
+                        m = CRON_JOB.search(str(c.get('content')))
+                        # Unknown wording keeps the cron (it can't be deleted by id): awake beats killed.
+                        crons[m.group(1) if m else c['tool_use_id']] = _cron_expiry(*made)
+                if c.get('type') != 'tool_use':
                     continue
                 name, inp = c.get('name'), c.get('input') or {}
                 if name == 'ScheduleWakeup':
                     pending = [] if inp.get('stop') else [('wakeup', ts + float(inp.get('delaySeconds') or 0))]
                 elif name == 'CronCreate':
-                    crons[c.get('id')] = ts
+                    creates[c.get('id')] = (ts, inp)
                 elif name == 'CronDelete':
-                    crons.clear()  # ids differ from tool_use ids; any delete after a create is treated as teardown
+                    crons.pop(inp.get('id'), None)
                 elif name == 'Monitor':
                     pending.append(('monitor', float('inf')))
         now = time.time()
         live = [kind for kind, until in pending if until > now - 600]
-        if crons:
+        if any(until > now for until in crons.values()):
             live.append('cron')
         if last_msg is None:
             return None, live
@@ -209,6 +221,26 @@ class Hermes:
         start = next((i for i, a in enumerate(argv) if os.path.basename(a) == 'hermes'), 0)
         rest = _strip_flags(argv[start + 1 :], ('--resume', '-r'), (), ('--continue', '-c'))
         return ['hermes', *rest, '--resume', sid]
+
+
+CRON_JOB = re.compile(r'Scheduled [\w-]+ (?:job|task) ([0-9a-f]{6,})')
+CRON_TTL = 7 * 86400  # Claude expires recurring crons after 7 days
+
+
+def _cron_expiry(ts, inp):
+    """When a session-only cron stops mattering. Recurring: its 7-day expiry. One-shot: its
+    pinned minute/hour/day/month (plus jitter), or the 7 days when the fields are not pinned."""
+    if inp.get('recurring', True):
+        return ts + CRON_TTL
+    try:
+        mi, hr, dom, mon = (int(f) for f in str(inp.get('cron')).split()[:4])
+        made = dt.datetime.fromtimestamp(ts)
+        at = made.replace(month=mon, day=dom, hour=hr, minute=mi, second=0, microsecond=0)
+        if at < made - dt.timedelta(minutes=1):
+            at = at.replace(year=at.year + 1)
+        return at.timestamp() + 900
+    except ValueError:
+        return ts + CRON_TTL
 
 
 def _newest_mtime(dirpath):
