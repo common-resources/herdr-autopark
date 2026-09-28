@@ -45,15 +45,27 @@ To hack on it, clone the repo and use `herdr plugin link <path>`, which runs the
 | [Pi](https://github.com/badlogic/pi-mono) | `pi` | 🗺️ next | | |
 | Copilot CLI, Cursor Agent, Amp, Droid, Kimi, Qwen Code, Grok and the other kinds herdr detects | | 💭 later | | |
 
-Agents without an adapter are left alone. Each one is a small class in [`bin/harnesses.py`](bin/harnesses.py) that answers five questions:
+### How to add support for another agent harness
 
-1. What is its process called?
-2. Which session is it on? (herdr often reports this; otherwise the adapter looks it up.)
-3. When was it last active, and is anything still pending, like a scheduled wakeup or a background job?
-4. What does the conversation look like? (Only used when the screen capture is missing.)
-5. Which command resumes it?
+Each harness is an adapter class in [`bin/harnesses.py`](bin/harnesses.py), registered in the `HARNESSES` map under the agent kind herdr reports. The sweep and the parked view never inspect a harness directly; they go through this interface:
 
-The rows marked "next" are the ones worth doing first. Each needs someone to check where the agent keeps its sessions and how it resumes one, and then a real park and resume in herdr. Pull requests are welcome, and so are issues that just say "I'd use this with X".
+| Member | Contract |
+| --- | --- |
+| `kind` | The herdr agent kind the adapter handles, for example `codex`. |
+| `procs` | Process names (`/proc/<pid>/comm`) that identify the harness under the pane's shell. |
+| `session_id(agent, pid, cwd)` | The id of the running session. Prefer herdr's `agent_session` report; fall back to the harness's own state. Return `None` when the answer is ambiguous, and the pane is skipped. |
+| `activity(sid, since_epoch)` | A tuple of the last user or assistant message time (epoch seconds) and a list of pending work, such as scheduled jobs or background tasks. Any pending item keeps the session awake. `since_epoch` is the process start; state that dies with the process should be ignored before it. |
+| `blocks(sid)` | The conversation as display blocks, oldest first: `('user', text)`, `('assistant', text)`, `('tool', name, arg)`, `('result', first_line)`. Used only when the screen capture is missing. |
+| `relaunch(argv, sid)` | The argv that resumes the session, built from the original argv with any existing resume flags removed. |
+
+An adapter is ready to merge when:
+
+1. It reads session state from the harness's own files or database, read-only.
+2. `activity` reports every kind of work that stops when the process exits, so such sessions are never parked.
+3. `bin/test_autopark.py` covers `relaunch` and `activity` with fixture data.
+4. A real park and resume has been done in herdr: the parked view shows the conversation, and Enter brings back the same session with the original flags.
+
+The agents marked "next" in the table are the priority. Pull requests are welcome, and so are issues that name a harness you would use this with.
 
 ## What you get
 
@@ -110,7 +122,7 @@ It parks an agent only when all of these are true:
 
 - herdr reports it idle or done, and you're not focused on it
 - nothing was said, and no subagent or workflow file changed, within `idle_minutes`
-- nothing is pending: for Claude a `/loop` wakeup, cron job, monitor or subagent; for Hermes a delegated task or background process
+- nothing is pending: for Claude a `/loop` wakeup, cron job, monitor or subagent; for Hermes a delegated task or background process. Claude's cron jobs live only in the running process, so parking would cancel them: a session keeps every recurring job until it is deleted or reaches Claude's 7-day expiry, and every one-shot job until its time has passed
 - the agent has no child process other than its own MCP and language servers, so a shell, dev server or test run keeps it awake
 - the input box has no unsent draft
 - you didn't resume it from a park within `resume_grace_minutes`
