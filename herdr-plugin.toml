@@ -9,10 +9,11 @@ platforms = ["linux"]
 
 # herdr wants startup hooks to be one-shot, and this one is: it detaches the sweep loop and
 # exits. herdr has no timer event and parking is decided by elapsed idle time, so something has
-# to keep the clock. One instance per user (flock); it exits on its own when the plugin is
+# to keep the clock. It first puts back the parked view in panes a herdr restart turned into
+# plain shells. One instance per user (flock); it exits on its own when the plugin is
 # disabled or removed, and a server restart re-runs this hook without starting a second one.
 [[startup]]
-command = ["bash", "-c", "setsid -f python3 bin/autopark --daemon </dev/null >/dev/null 2>&1"]
+command = ["bash", "-c", "python3 bin/autopark --rearm >/dev/null 2>&1; setsid -f python3 bin/autopark --daemon </dev/null >/dev/null 2>&1"]
 
 [[actions]]
 id = "setup"

@@ -157,6 +157,38 @@ def test_closed_pane_forgets_only_its_own_park_files():
         assert sorted(os.listdir(f'{d}/parked')) == ['b.json', 'b.screen']
 
 
+def test_rearm_only_idle_shells_of_this_session():
+    calls = []
+    panes = [{'pane_id': 'w1:p1'}, {'pane_id': 'w1:p2'}, {'pane_id': 'w1:p3', 'agent': 'claude'}]
+    busy = {'w1:p2'}
+
+    def fake_herdr(*args):
+        calls.append(args)
+        if args[:2] == ('pane', 'list'):
+            return json.dumps({'result': {'panes': panes}})
+        if args[:2] == ('pane', 'process-info'):
+            fg = 2 if args[-1] in busy else 1
+            return json.dumps({'result': {'process_info': {'foreground_process_group_id': fg, 'shell_pid': 1}}})
+        return ''
+
+    with tempfile.TemporaryDirectory() as d:
+        os.makedirs(f'{d}/parked')
+        rec = {'kind': 'claude', 'cwd': '/', 'title': 't', 'note': 'n', 'relaunch': ['claude', '--resume', 'x']}
+        here, other = AP.SOCKET, '/other.sock'
+        # a: idle shell here; b: busy; c: agent running; d: same pane id in another session; e: pane gone
+        cases = (('a', 'w1:p1', here), ('b', 'w1:p2', here), ('c', 'w1:p3', here), ('d', 'w1:p1', other), ('e', 'w9:p9', here))
+        for sid, pane, sock in cases:
+            json.dump({**rec, 'sid': sid, 'pane': pane, 'socket': sock}, open(f'{d}/parked/{sid}.json', 'w'))
+        AP.STATE_DIR, real = d, AP.herdr
+        AP.herdr = fake_herdr
+        try:
+            AP.rearm()
+        finally:
+            AP.herdr = real
+    runs = [c for c in calls if c[:2] == ('pane', 'run')]
+    assert [c[2] for c in runs] == ['w1:p1'] and ' a / t n ' in runs[0][3], runs
+
+
 if __name__ == '__main__':
     tests = [f for name, f in sorted(globals().items()) if name.startswith('test_')]
     for t in tests:

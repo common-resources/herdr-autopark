@@ -43,6 +43,9 @@ PLUGIN_ID = 'autopark'
 # herdr hands plugins their own dirs; the fallbacks match herdr's defaults so a run from a plain
 # shell (the CLI, tests) shares state and the daemon lock with the plugin-launched one.
 HERDR = os.environ.get('HERDR_BIN_PATH') or 'herdr'
+# Pane ids repeat across herdr sessions (every session has a w1:p1), so park records name theirs.
+DEFAULT_SOCKET = f'{HOME}/.config/herdr/herdr.sock'
+SOCKET = os.environ.get('HERDR_SOCKET_PATH') or DEFAULT_SOCKET
 STATE_DIR = os.environ.get('HERDR_PLUGIN_STATE_DIR') or os.path.join(
     os.environ.get('XDG_STATE_HOME') or f'{HOME}/.local/state', 'herdr', 'plugins', PLUGIN_ID
 )
@@ -358,6 +361,7 @@ def park(a, facts):
     json.dump(
         {
             'pane': pane,
+            'socket': SOCKET,
             'kind': h.kind,
             'sid': sid,
             'cwd': cwd,
@@ -446,24 +450,53 @@ def daemon():
     log('daemon stopped')
 
 
+def records():
+    """(path, record) for every park record of this herdr session."""
+    for path in glob.glob(f'{STATE_DIR}/parked/*.json'):
+        try:
+            rec = json.load(open(path))
+        except (OSError, ValueError):
+            continue
+        if rec.get('socket', DEFAULT_SOCKET) == SOCKET:
+            yield path, rec
+
+
+def rearm():
+    """After a herdr restart a parked pane comes back as a plain shell: herdr saved no agent for
+    it, so it resumes nothing, and the waiter died with the old server. Start the waiter again in
+    every recorded pane that is sitting at an idle shell prompt."""
+    panes = {p['pane_id']: p for p in json.loads(herdr('pane', 'list'))['result']['panes']}
+    for _, rec in records():
+        pane = rec.get('pane')
+        if pane not in panes or panes[pane].get('agent'):
+            continue
+        info = json.loads(herdr('pane', 'process-info', '--pane', pane))['result']['process_info']
+        if info.get('foreground_process_group_id') != info.get('shell_pid'):
+            continue  # something runs in the foreground: the waiter survived, or the user took the pane
+        snapshot = f"{STATE_DIR}/parked/{rec['sid']}.screen"
+        snapshot = snapshot if os.path.exists(snapshot) else None
+        args = [rec[k] for k in ('kind', 'sid', 'cwd', 'title', 'note', 'relaunch')]
+        herdr('pane', 'run', pane, waiter_command(*args, snapshot))
+        log(f"REARMED {pane} {rec['title']!r} after a herdr restart")
+
+
 def forget_pane(pane):
     """Drop the park record, screen capture and abort marker of a closed pane. Records stay
     while the pane lives: the resume grace reads them. herdr never reuses a pane id."""
     # ponytail: a pane moved to another workspace changes id, so its files wait for a later close
-    for rec in glob.glob(f'{STATE_DIR}/parked/*.json'):
-        try:
-            if json.load(open(rec)).get('pane') != pane:
-                continue
-        except (OSError, ValueError):
+    for path, rec in list(records()):
+        if rec.get('pane') != pane:
             continue
         for ext in ('.json', '.screen', '.abort'):
             with contextlib.suppress(FileNotFoundError):
-                os.remove(rec[:-5] + ext)
+                os.remove(path[:-5] + ext)
         log(f'forgot {pane}: pane closed')
 
 
 if __name__ == '__main__':
-    if '--pane-closed' in sys.argv:  # [[events]] pane.closed
+    if '--rearm' in sys.argv:  # [[startup]], after herdr restores the session
+        rearm()
+    elif '--pane-closed' in sys.argv:  # [[events]] pane.closed
         forget_pane(json.loads(os.environ.get('HERDR_PLUGIN_EVENT_JSON') or '{}').get('data', {}).get('pane_id'))
     else:
         daemon() if '--daemon' in sys.argv else main()
