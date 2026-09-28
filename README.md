@@ -133,16 +133,6 @@ Every check runs again right before `/exit` is sent. If Claude asks to confirm e
 
 To see what it's doing, look at `~/.local/state/herdr-autopark/log`, or run `autopark.preview`.
 
-## Notes on herdr
-
-Some herdr behavior shaped the design, in case you build something similar:
-
-- herdr accepts `pane report-agent` only from inside the pane, and silently ignores it from anywhere else. That's why the waiting script in the pane registers itself.
-- A custom report that claims agent `claude` is refused in a pane where the real Claude integration ran. Other labels work, which is why parked panes report as `parked`.
-- A custom `--source` needs the `custom:` prefix.
-- herdr's Hermes integration may not report a session id, so the Hermes adapter looks it up in `state.db` (by working directory and process start, or the `--resume` argument).
-- Hermes leaves a pasted line unsent, so `/exit` is typed and followed by Enter rather than pasted.
-
 ## Roadmap
 
 These are planned, roughly in order. None of them are built yet.
