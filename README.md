@@ -152,6 +152,7 @@ These are planned, roughly in order. None of them are built yet.
 - [ ] Redraw from the session history when the pane is resized to a very different size, instead of cropping the capture
 - [ ] Delete park records and screen captures once their pane is resumed or closed
 - [ ] Optional herdr toast when something is parked
+- [ ] Cap how long subagents can keep an agent awake (`max_subagent_minutes`): past it, park anyway and stop them through the exit dialog, and show the open subagents in `autopark.preview`
 
 **Upkeep**
 
