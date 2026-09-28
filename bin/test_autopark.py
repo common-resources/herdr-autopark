@@ -58,6 +58,32 @@ def test_view_replays_snapshot_without_input_box():
     assert any('Press Enter to resume' in ln for ln in plain)
 
 
+DIALOG = """
+   Background work is running
+   The following will stop when you exit:
+
+   subagent · Reply with the single word ok only.
+   {extra}
+   ❯ 1. Exit and stop tasks
+     2. Move to background and exit
+     3. Stay
+
+   Enter to confirm · n to cancel
+"""
+
+
+def test_exit_dialog_stops_only_idle_subagents():
+    assert AP.exit_confirm_choice('❯ plain prompt') == (None, [])
+    assert AP.exit_confirm_choice(DIALOG.format(extra='')) == ('stop', ['subagent'])
+    choice, items = AP.exit_confirm_choice(DIALOG.format(extra='shell · pnpm dev'))
+    assert choice == 'cancel' and items == ['subagent', 'shell']
+    AP.CFG['stop_idle_subagents'] = False
+    try:
+        assert AP.exit_confirm_choice(DIALOG.format(extra=''))[0] == 'cancel'
+    finally:
+        AP.CFG['stop_idle_subagents'] = True
+
+
 if __name__ == '__main__':
     tests = [f for name, f in sorted(globals().items()) if name.startswith('test_')]
     for t in tests:

@@ -76,6 +76,7 @@ herdr plugin action invoke autopark.config   # opens the config in $EDITOR
 | `resume_grace_minutes` | same as `idle_minutes` | After you resume a pane, keep it awake at least this long |
 | `exclude` | `[]` | Session ids or pane ids never to park |
 | `extra_benign_children` | `[]` | Regexes for more child processes that are idle servers, not work |
+| `stop_idle_subagents` | `true` | When Claude asks to confirm exit because background subagents are open, stop them if every one is a subagent; anything else (a shell, a workflow) cancels the park |
 | `show_transcript` | `true` | Set `false` for a one-line banner instead of the captured screen |
 | `dry_run` | `false` | Log what would be parked, park nothing |
 
@@ -114,7 +115,7 @@ It parks an agent only when all of these are true:
 - the input box has no unsent draft
 - you didn't resume it from a park within `resume_grace_minutes`
 
-Every check runs again right before `/exit` is sent. If the agent is still alive 30 seconds after `/exit`, the pane is left alone.
+Every check runs again right before `/exit` is sent. If Claude asks to confirm exit and only idle subagents are listed, autopark picks "Exit and stop tasks"; otherwise it cancels and waits for new activity before trying again. If the agent is still alive 30 seconds after `/exit`, the pane is left alone.
 
 To see what it's doing, look at `~/.local/state/herdr-autopark/log`, or run `autopark.preview`.
 

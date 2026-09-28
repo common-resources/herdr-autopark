@@ -47,6 +47,7 @@ DEFAULTS = {
     'extra_benign_children': [],  # regexes for more child processes that do not count as work
     'show_transcript': True,  # parked pane shows the transcript tail (False = plain banner)
     'dry_run': False,  # log what would be parked, park nothing
+    'stop_idle_subagents': True,  # answer Claude's exit dialog by stopping subagents that sat idle
 }
 # Children that are part of an idle session, not work in flight.
 BENIGN_DEFAULT = (
@@ -242,7 +243,12 @@ def evaluate(a, excl):
     if not last_act:
         return 'no messages', {}
     idle_min = (time.time() - last_act) / 60
-    facts = {'pid': pid, 'cwd': cwd, 'idle_min': round(idle_min), 'sid': sid, 'harness': h}
+    facts = {'pid': pid, 'cwd': cwd, 'idle_min': round(idle_min), 'sid': sid, 'harness': h, 'last_act': last_act}
+    try:
+        if float(open(f'{STATE_DIR}/parked/{sid}.abort').read()) == last_act:
+            return 'last exit attempt was cancelled; waiting for new activity', facts
+    except (OSError, ValueError):
+        pass
     if idle_min < IDLE_MINUTES:
         return f'active {idle_min:.0f}m ago', facts
     if pending:
@@ -268,6 +274,38 @@ def waiter_command(kind, sid, cwd, title, note, relaunch, snapshot):
     return ' '.join(shlex.quote(x) for x in [*env, WAITER, sid, cwd, title, note, *relaunch])
 
 
+EXIT_CONFIRM = 'Background work is running'
+
+
+def exit_confirm_choice(screen):
+    """Claude's exit confirmation: ('stop', items) when everything it would stop is a subagent
+    and stop_idle_subagents is on, ('cancel', items) for anything else it lists, (None, [])
+    when the dialog is not on screen. By now the session passed every idle check, so its
+    subagents have been quiet for idle_minutes."""
+    if EXIT_CONFIRM not in screen:
+        return None, []
+    lines = screen.splitlines()
+    start = next((i for i, ln in enumerate(lines) if 'will stop when you exit' in ln), None)
+    if start is None:
+        return 'cancel', ['unreadable list']
+    items = []
+    for ln in lines[start + 1 :]:
+        text = ln.strip().lstrip('❯').strip()
+        if re.match(r'\d+\.', text):
+            break
+        if text:
+            items.append(text.split('·')[0].strip())
+    ok = items and all(kind == 'subagent' for kind in items) and CFG['stop_idle_subagents']
+    return ('stop' if ok else 'cancel'), items
+
+
+def abort(sid, facts, msg):
+    """Log, and remember the activity time so the next sweeps skip this session until it moves."""
+    log(msg)
+    with open(f'{STATE_DIR}/parked/{sid}.abort', 'w') as f:
+        f.write(str(facts['last_act']))
+
+
 def park(a, facts):
     pane, pid, sid, cwd, h = a['pane_id'], facts['pid'], facts['sid'], facts['cwd'], facts['harness']
     title = a.get('terminal_title_stripped') or sid
@@ -286,6 +324,30 @@ def park(a, facts):
         log(f'snapshot failed for {pane}, parked view will draw the history instead: {e}')
         snapshot = None
     cmd = waiter_command(h.kind, sid, cwd, title, note, relaunch, snapshot)
+    # Typed rather than pasted: some harnesses (Hermes) leave a pasted line unsent.
+    herdr('pane', 'send-text', pane, '/exit')
+    time.sleep(0.5)
+    herdr('pane', 'send-keys', pane, 'enter')
+    answered = False
+    for i in range(60):
+        if not os.path.exists(f'/proc/{pid}'):
+            break
+        time.sleep(0.5)
+        if answered or i < 3:
+            continue
+        # Claude asks before exiting while background work is open. Answer it, never leave it up.
+        choice, items = exit_confirm_choice(herdr('pane', 'read', pane, '--source', 'visible', '--lines', '60'))
+        if choice == 'stop':
+            herdr('pane', 'send-keys', pane, 'enter')  # "1. Exit and stop tasks" is preselected
+            log(f'{pane} {title!r}: stopping idle {", ".join(items)} to exit')
+            answered = True
+        elif choice == 'cancel':
+            herdr('pane', 'send-keys', pane, 'n')
+            abort(sid, facts, f'PARK ABORTED {pane} {title!r}: exit would stop {", ".join(items)}; cancelled')
+            return
+    else:
+        abort(sid, facts, f'PARK ABORTED {pane} {title!r}: {h.kind} pid {pid} still alive 30s after /exit; left untouched')
+        return
     json.dump(
         {
             'pane': pane,
@@ -301,17 +363,6 @@ def park(a, facts):
         open(f'{STATE_DIR}/parked/{sid}.json', 'w'),
         indent=2,
     )
-    # Typed rather than pasted: some harnesses (Hermes) leave a pasted line unsent.
-    herdr('pane', 'send-text', pane, '/exit')
-    time.sleep(0.5)
-    herdr('pane', 'send-keys', pane, 'enter')
-    for _ in range(60):
-        if not os.path.exists(f'/proc/{pid}'):
-            break
-        time.sleep(0.5)
-    else:
-        log(f'PARK ABORTED {pane} {title!r}: {h.kind} pid {pid} still alive 30s after /exit; left untouched')
-        return
     time.sleep(1)  # let the pane shell redraw its prompt before typing into it
     herdr('pane', 'run', pane, cmd)
     log(f'PARKED {pane} {title!r} idle={facts["idle_min"]}m sid={sid}')

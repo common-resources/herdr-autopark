@@ -20,5 +20,10 @@ extra_benign_children = []
 # true: the parked pane shows the agent's screen as it was when parked. false: a one-line banner.
 show_transcript = true
 
+# Claude asks before exiting while subagents are open. true: stop them (they have been idle as
+# long as the session) and park. false: cancel and leave the pane alone. Anything other than
+# subagents in that list always cancels.
+stop_idle_subagents = true
+
 # true: only log what would be parked (see the log), park nothing.
 dry_run = false
