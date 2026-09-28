@@ -182,11 +182,40 @@ def test_rearm_only_idle_shells_of_this_session():
         AP.STATE_DIR, real = d, AP.herdr
         AP.herdr = fake_herdr
         try:
-            AP.rearm()
+            AP.rearm(wait=0)
         finally:
             AP.herdr = real
     runs = [c for c in calls if c[:2] == ('pane', 'run')]
     assert [c[2] for c in runs] == ['w1:p1'] and ' a / t n ' in runs[0][3], runs
+
+
+def test_rearm_waits_for_starting_shell_and_old_records():
+    calls, polls = [], {'n': 0}
+
+    def fake_herdr(*args):
+        calls.append(args)
+        if args[:2] == ('pane', 'list'):
+            polls['n'] += 1
+            return json.dumps({'result': {'panes': [{'pane_id': 'w1:p1'}, {'pane_id': 'w1:p2'}]}})
+        if args[:2] == ('pane', 'process-info'):
+            fg = 9 if args[-1] == 'w1:p2' and polls['n'] < 3 else 1  # w1:p2 still loading fish config
+            return json.dumps({'result': {'process_info': {'foreground_process_group_id': fg, 'shell_pid': 1}}})
+        return ''
+
+    with tempfile.TemporaryDirectory() as d:
+        os.makedirs(f'{d}/parked')
+        rec = {'cwd': '/', 'title': 't', 'note': 'n', 'relaunch': ['claude', '--resume', 'x']}  # no kind: pre-Hermes record
+        for sid, pane in (('a', 'w1:p1'), ('b', 'w1:p2')):
+            json.dump({**rec, 'sid': sid, 'pane': pane}, open(f'{d}/parked/{sid}.json', 'w'))
+        AP.STATE_DIR, real = d, AP.herdr
+        AP.herdr = fake_herdr
+        try:
+            AP.rearm(wait=5, step=0)
+        finally:
+            AP.herdr = real
+    runs = [c for c in calls if c[:2] == ('pane', 'run')]
+    assert sorted(c[2] for c in runs) == ['w1:p1', 'w1:p2'], runs
+    assert all('AUTOPARK_KIND=claude' in c[3] for c in runs), runs
 
 
 if __name__ == '__main__':

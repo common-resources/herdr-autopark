@@ -461,23 +461,38 @@ def records():
             yield path, rec
 
 
-def rearm():
+def rearm(wait=60, step=2):
     """After a herdr restart a parked pane comes back as a plain shell: herdr saved no agent for
     it, so it resumes nothing, and the waiter died with the old server. Start the waiter again in
-    every recorded pane that is sitting at an idle shell prompt."""
-    panes = {p['pane_id']: p for p in json.loads(herdr('pane', 'list'))['result']['panes']}
-    for _, rec in records():
-        pane = rec.get('pane')
-        if pane not in panes or panes[pane].get('agent'):
-            continue
-        info = json.loads(herdr('pane', 'process-info', '--pane', pane))['result']['process_info']
-        if info.get('foreground_process_group_id') != info.get('shell_pid'):
-            continue  # something runs in the foreground: the waiter survived, or the user took the pane
-        snapshot = f"{STATE_DIR}/parked/{rec['sid']}.screen"
-        snapshot = snapshot if os.path.exists(snapshot) else None
-        args = [rec[k] for k in ('kind', 'sid', 'cwd', 'title', 'note', 'relaunch')]
-        herdr('pane', 'run', pane, waiter_command(*args, snapshot))
-        log(f"REARMED {pane} {rec['title']!r} after a herdr restart")
+    every recorded pane that is sitting at an idle shell prompt. The startup hook fires while the
+    restored shells are still loading their config, so a pane not at its prompt yet is retried
+    until `wait` runs out."""
+    pending = {rec.get('pane'): rec for _, rec in records()}
+    deadline = time.time() + wait
+    while True:
+        panes = {p['pane_id']: p for p in json.loads(herdr('pane', 'list'))['result']['panes']}
+        for pane, rec in list(pending.items()):
+            if pane not in panes or panes[pane].get('agent'):
+                del pending[pane]
+                continue
+            try:
+                info = json.loads(herdr('pane', 'process-info', '--pane', pane))['result']['process_info']
+                if info.get('foreground_process_group_id') != info.get('shell_pid'):
+                    continue  # shell still starting, the waiter survived, or the user took the pane
+                snapshot = f"{STATE_DIR}/parked/{rec['sid']}.screen"
+                snapshot = snapshot if os.path.exists(snapshot) else None
+                # records from before Hermes support carry no kind: they are all Claude
+                args = [rec.get('kind', 'claude'), *(rec[k] for k in ('sid', 'cwd', 'title', 'note', 'relaunch'))]
+                herdr('pane', 'run', pane, waiter_command(*args, snapshot))
+            except (RuntimeError, KeyError, ValueError) as e:
+                log(f'rearm {pane}: {e}')
+                del pending[pane]
+                continue
+            del pending[pane]
+            log(f"REARMED {pane} {rec['title']!r} after a herdr restart")
+        if not pending or time.time() >= deadline:
+            return
+        time.sleep(step)
 
 
 def forget_pane(pane):
