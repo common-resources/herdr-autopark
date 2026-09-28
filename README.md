@@ -2,7 +2,7 @@
 
 # Autopark
 
-**Idle coding agents give their RAM back. The conversation stays on screen, and Enter resumes it.**
+**Parks idle coding agents to free their RAM. The conversation stays on screen and Enter resumes it.**
 
 A plugin for [herdr](https://herdr.dev), the terminal workspace for coding agents.
 
@@ -18,13 +18,13 @@ A plugin for [herdr](https://herdr.dev), the terminal workspace for coding agent
 
 ## Why
 
-RAM is precious nowadays. I was maxing out my 64 GB constantly with my agent fleet. If you are an agent hoarder like me and you find yourself in the same situation, this plugin might help.
+RAM is precious nowadays. My agent fleet kept maxing out my 64 GB. If you hoard agents like I do and keep running into the same wall, this plugin might help.
 
-I keep a lot of agent tabs open at once, and most of them are waiting on something: a PR review, or a colleague's email before the next step. Closing them means digging through `claude --resume` or `/resume` later to find the right session. With autopark you keep every tab where you left it, laid out the way you like, and only the idle ones give their memory back.
+I keep a lot of agent tabs open at once, and most of them are waiting on something, like a PR review or a colleague's email. If I close them, I later have to dig through `claude --resume` or `/resume` to find the right session. With autopark the tabs stay where I put them, and the idle ones stop using memory until I come back.
 
-A Claude Code session holds 1 to 2 GB once its MCP servers are counted, and it keeps holding it while it sits idle for days. On my machine, autopark made 12 parks in its first 11 hours. At the time of writing, 6 of my 9 agent panes are parked, which gives back roughly 7 to 11 GB.
+A Claude Code session with its MCP servers uses 1 to 2 GB, even after sitting idle for days. On my machine autopark parked 12 agents in its first 11 hours. As I write this, 6 of my 9 agent panes are parked, which frees roughly 7 to 11 GB.
 
-Autopark checks every ten minutes and parks each agent that has been quiet for an hour. The process exits and its memory is freed. The pane stays put, with the conversation still showing, and one keypress brings it back on the same session, with the same flags and in the same directory.
+Every ten minutes autopark looks for agents that have been quiet for an hour and parks them. The agent process exits, but the pane stays open and keeps showing the conversation. Pressing Enter starts the agent again on the same session, with the same flags, in the same directory.
 
 ## Install
 
@@ -76,7 +76,7 @@ The agents marked "next" in the table are the priority. Pull requests are welcom
 - A still view of the conversation. Right before parking, autopark captures the agent's own screen and replays it in the pane, with a prompt box at the bottom. If the capture fails, it draws the conversation from the session history instead. It has no scrollback, and the wheel and arrow keys do nothing, so a stray scroll can't write into it.
 - It stays in the sidebar. Parked panes keep their place, tagged `parked` and colored, with a note such as `4.1d idle, parked 23:34`.
 - Resume with Enter. The agent comes back on the same session with the flags you started it with. Ctrl+C drops to a plain shell instead.
-- Careful about what counts as idle. When anything suggests the agent is still busy, it is left alone (see below).
+- A strict idea of idle. If anything suggests the agent is still busy, it is left alone (see below).
 - Settings live in one file and apply on the next check.
 
 ## Configure
@@ -147,7 +147,6 @@ These are planned, roughly in order. None of them are built yet.
 **More agents**
 
 - [ ] Codex, OpenCode, Gemini CLI and Pi adapters (see the table above)
-- [ ] A short guide in the repo for writing an adapter, with a checklist for the live park-and-resume test
 
 **Quality of life**
 
@@ -170,11 +169,11 @@ make check   # ruff, shellcheck, shfmt and the self-check; this is what CI runs
 make fmt     # apply ruff and shfmt fixes
 ```
 
-The only requirement is [uv](https://docs.astral.sh/uv/): the linters run through `uvx`, and the self-check (`bin/test_autopark.py`) is plain Python that also runs under pytest.
+The only requirement is [uv](https://docs.astral.sh/uv/). The linters run through `uvx`, and the self-check (`bin/test_autopark.py`) is plain Python that also runs under pytest.
 
 ## Like it?
 
-If Autopark gave you back a few gigabytes, please [star the repo](https://github.com/common-resources/herdr-autopark) ⭐. Stars help other herdr users find it, and they tell me it's worth adding more (macOS support, more agents). Issues and pull requests are welcome too.
+If Autopark saved you a few gigabytes, please [star the repo](https://github.com/common-resources/herdr-autopark) ⭐. Stars help other herdr users find it, and they tell me it's worth adding more (macOS support, more agents). Issues and pull requests are welcome too.
 
 <a href="https://star-history.com/#common-resources/herdr-autopark&Date">
   <picture>
