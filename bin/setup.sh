@@ -3,7 +3,8 @@
 # sidebar rows to add. With --edit, open the config in $EDITOR instead.
 set -uo pipefail
 root=$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")
-dir=$("${HERDR_BIN_PATH:-herdr}" plugin config-dir autopark 2>/dev/null) || dir=$HOME/.config/herdr/plugins/config/autopark
+dir=${HERDR_PLUGIN_CONFIG_DIR:-$("${HERDR_BIN_PATH:-herdr}" plugin config-dir autopark 2>/dev/null)}
+dir=${dir:-$HOME/.config/herdr/plugins/config/autopark}
 mkdir -p "$dir"
 cfg=$dir/config.toml
 [[ -f $cfg ]] || cp "$root/config.example.toml" "$cfg"
@@ -16,7 +17,7 @@ cat <<MSG
 
   Config:  $cfg
            (edit with the "Autopark: edit config" action; changes apply on the next sweep)
-  Log:     ${XDG_STATE_HOME:-$HOME/.local/state}/herdr-autopark/log
+  Log:     ${HERDR_PLUGIN_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr/plugins/autopark}/log
 
   Sidebar: parked panes report the state label "parked" and a \$parked note
   ("4.1d idle, parked 23:34"). To color them, put these into [ui.sidebar.agents] rows

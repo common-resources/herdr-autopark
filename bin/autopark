@@ -37,8 +37,13 @@ from harnesses import HARNESSES  # noqa: E402
 HOME = os.path.expanduser('~')
 HERE = os.path.dirname(os.path.realpath(__file__))
 WAITER = f'{HERE}/parked-wait'
-STATE_DIR = os.path.join(os.environ.get('XDG_STATE_HOME') or f'{HOME}/.local/state', 'herdr-autopark')
 PLUGIN_ID = 'autopark'
+# herdr hands plugins their own dirs; the fallbacks match herdr's defaults so a run from a plain
+# shell (the CLI, tests) shares state and the daemon lock with the plugin-launched one.
+HERDR = os.environ.get('HERDR_BIN_PATH') or 'herdr'
+STATE_DIR = os.environ.get('HERDR_PLUGIN_STATE_DIR') or os.path.join(
+    os.environ.get('XDG_STATE_HOME') or f'{HOME}/.local/state', 'herdr', 'plugins', PLUGIN_ID
+)
 DEFAULTS = {
     'idle_minutes': 60,  # park after this long without a message or subagent activity
     'interval_minutes': 10,  # how often the background loop sweeps
@@ -61,10 +66,10 @@ SHELL = re.compile(r'^(\S*/)?(ba|z|fi|da)?sh\b')
 def config_path():
     if os.environ.get('AUTOPARK_CONFIG'):
         return os.environ['AUTOPARK_CONFIG']
+    if os.environ.get('HERDR_PLUGIN_CONFIG_DIR'):
+        return os.path.join(os.environ['HERDR_PLUGIN_CONFIG_DIR'], 'config.toml')
     try:
-        d = subprocess.run(
-            ['herdr', 'plugin', 'config-dir', PLUGIN_ID], capture_output=True, text=True, timeout=10
-        ).stdout.strip()
+        d = subprocess.run([HERDR, 'plugin', 'config-dir', PLUGIN_ID], capture_output=True, text=True, timeout=10).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         d = ''
     return os.path.join(d or f'{HOME}/.config/herdr/plugins/config/{PLUGIN_ID}', 'config.toml')
@@ -111,7 +116,7 @@ def log(msg):
 
 
 def herdr(*args):
-    r = subprocess.run(['herdr', *args], capture_output=True, text=True, timeout=30)
+    r = subprocess.run([HERDR, *args], capture_output=True, text=True, timeout=30)
     if r.returncode:
         raise RuntimeError(f'herdr {" ".join(args[:2])}: {r.stderr.strip()[:200]}')
     return r.stdout

@@ -7,7 +7,9 @@ description = "Park coding agents (Claude Code, Hermes) idle for an hour to free
 # Reads /proc to match panes to Claude processes.
 platforms = ["linux"]
 
-# The sweep loop. One instance per user (flock); it exits on its own when the plugin is
+# herdr wants startup hooks to be one-shot, and this one is: it detaches the sweep loop and
+# exits. herdr has no timer event and parking is decided by elapsed idle time, so something has
+# to keep the clock. One instance per user (flock); it exits on its own when the plugin is
 # disabled or removed, and a server restart re-runs this hook without starting a second one.
 [[startup]]
 command = ["bash", "-c", "setsid -f python3 bin/autopark --daemon </dev/null >/dev/null 2>&1"]

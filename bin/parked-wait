@@ -9,10 +9,10 @@ set -u
 sid=$1 cwd=$2 title=$3 note=$4
 shift 4
 here=$(dirname "$(realpath "${BASH_SOURCE[0]}")")
-state=${XDG_STATE_HOME:-$HOME/.local/state}/herdr-autopark
+state=${XDG_STATE_HOME:-$HOME/.local/state}/herdr/plugins/autopark
 mkdir -p "$state"
 src=custom:herdr-autopark
-rep() { herdr pane "$@" "$HERDR_PANE_ID" --source "$src" --agent parked --seq "$(date +%s%3N)" "${extra[@]}" >/dev/null 2>>"$state/waiter.log" || echo "$(date +%T) $HERDR_PANE_ID $1 failed" >>"$state/waiter.log"; }
+rep() { "${HERDR_BIN_PATH:-herdr}" pane "$@" "$HERDR_PANE_ID" --source "$src" --agent parked --seq "$(date +%s%3N)" "${extra[@]}" >/dev/null 2>>"$state/waiter.log" || echo "$(date +%T) $HERDR_PANE_ID $1 failed" >>"$state/waiter.log"; }
 
 unregister() {
   extra=(--clear-state-labels --clear-token parked)

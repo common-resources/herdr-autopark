@@ -131,7 +131,7 @@ It parks an agent only when all of these are true:
 
 Every check runs again right before `/exit` is sent. If Claude asks to confirm exit and only idle subagents are listed, autopark picks "Exit and stop tasks"; otherwise it cancels and waits for new activity before trying again. If the agent is still alive 30 seconds after `/exit`, the pane is left alone.
 
-To see what it's doing, look at `~/.local/state/herdr-autopark/log`, or run `autopark.preview`.
+To see what it's doing, look at `log` in the plugin state directory (`~/.local/state/herdr/plugins/autopark/` by default), or run `autopark.preview`.
 
 ## Roadmap
 
