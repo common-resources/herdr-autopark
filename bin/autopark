@@ -414,13 +414,15 @@ def plugin_enabled():
 
 
 def daemon():
-    """Background sweep started by the plugin's [[startup]] hook. One instance per user; it
+    """Background sweep started by the plugin's [[startup]] hook. One instance per herdr session; it
     exits when the plugin is disabled or removed, or when the herdr server stays unreachable."""
     global CFG, IDLE_MINUTES, BENIGN_CHILD
     import fcntl
 
     os.makedirs(STATE_DIR, exist_ok=True)
-    lock = open(f'{STATE_DIR}/daemon.lock', 'a+')  # not 'w': a losing instance must not wipe the pid
+    # Each herdr session starts its own daemon, and a daemon sweeps only its own session.
+    name = 'daemon' if SOCKET == DEFAULT_SOCKET else f'daemon-{os.path.basename(os.path.dirname(SOCKET))}'
+    lock = open(f'{STATE_DIR}/{name}.lock', 'a+')  # not 'w': a losing instance must not wipe the pid
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
@@ -428,7 +430,7 @@ def daemon():
     lock.truncate(0)
     lock.write(str(os.getpid()))
     lock.flush()
-    log(f'daemon started pid={os.getpid()}')
+    log(f'daemon started pid={os.getpid()} socket={SOCKET}')
     misses = 0
     while os.path.exists(WAITER):
         enabled = plugin_enabled()
