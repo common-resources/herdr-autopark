@@ -149,6 +149,13 @@ def agent_pid_for(pane_id, procs):
     return tops[0] if len(tops) == 1 else None
 
 
+def proc_env(pid, names):
+    """The values of `names` set in the process's environment."""
+    pairs = open(f'/proc/{pid}/environ', 'rb').read().decode(errors='replace').split('\0')
+    env = dict(kv.split('=', 1) for kv in pairs if '=' in kv)
+    return {k: env[k] for k in names if env.get(k)}
+
+
 def proc_start_epoch(pid):
     boot = time.time() - float(open('/proc/uptime').read().split()[0])
     ticks = int(open(f'/proc/{pid}/stat').read().rsplit(')', 1)[1].split()[19])
@@ -249,11 +256,12 @@ def evaluate(a, excl):
     rec = f'{STATE_DIR}/parked/{sid}.json'
     if os.path.exists(rec) and started > os.path.getmtime(rec) and time.time() - started < CFG['resume_grace_minutes'] * 60:
         return f'resumed from park {(time.time() - started) / 60:.0f}m ago', {}
-    last_act, pending = h.activity(sid, started)
+    env = proc_env(pid, h.env)
+    last_act, pending = h.activity(sid, started, env)
     if not last_act:
         return 'no messages', {}
     idle_min = (time.time() - last_act) / 60
-    facts = {'pid': pid, 'cwd': cwd, 'idle_min': round(idle_min), 'sid': sid, 'harness': h, 'last_act': last_act}
+    facts = {'pid': pid, 'cwd': cwd, 'idle_min': round(idle_min), 'sid': sid, 'harness': h, 'last_act': last_act, 'env': env}
     try:
         if float(open(f'{STATE_DIR}/parked/{sid}.abort').read()) == last_act:
             return 'last exit attempt was cancelled; waiting for new activity', facts
@@ -278,8 +286,9 @@ def idle_note(idle_min):
     return f'{span} idle, parked {dt.datetime.now():%H:%M}'
 
 
-def waiter_command(kind, sid, cwd, title, note, relaunch, snapshot):
-    env = [f'AUTOPARK_KIND={kind}'] + ([f'AUTOPARK_SNAPSHOT={snapshot}'] if snapshot else [])
+def waiter_command(kind, sid, cwd, title, note, relaunch, snapshot, agent_env=None):
+    env = [f'{k}={v}' for k, v in (agent_env or {}).items()]
+    env += [f'AUTOPARK_KIND={kind}'] + ([f'AUTOPARK_SNAPSHOT={snapshot}'] if snapshot else [])
     env += [] if CFG['show_transcript'] else ['AUTOPARK_PLAIN=1']
     return ' '.join(shlex.quote(x) for x in [*env, WAITER, sid, cwd, title, note, *relaunch])
 
@@ -333,7 +342,7 @@ def park(a, facts):
     except (RuntimeError, OSError, subprocess.SubprocessError) as e:
         log(f'snapshot failed for {pane}, parked view will draw the history instead: {e}')
         snapshot = None
-    cmd = waiter_command(h.kind, sid, cwd, title, note, relaunch, snapshot)
+    cmd = waiter_command(h.kind, sid, cwd, title, note, relaunch, snapshot, facts['env'])
     # Typed rather than pasted: some harnesses (Hermes) leave a pasted line unsent.
     herdr('pane', 'send-text', pane, '/exit')
     time.sleep(0.5)
@@ -367,6 +376,7 @@ def park(a, facts):
             'cwd': cwd,
             'title': title,
             'relaunch': relaunch,
+            'env': facts['env'],
             'note': note,
             'idle_min': facts['idle_min'],
             'parked_at': dt.datetime.now().isoformat(timespec='seconds'),
@@ -485,7 +495,7 @@ def rearm(wait=60, step=2):
                 snapshot = snapshot if os.path.exists(snapshot) else None
                 # records from before Hermes support carry no kind: they are all Claude
                 args = [rec.get('kind', 'claude'), *(rec[k] for k in ('sid', 'cwd', 'title', 'note', 'relaunch'))]
-                herdr('pane', 'run', pane, waiter_command(*args, snapshot))
+                herdr('pane', 'run', pane, waiter_command(*args, snapshot, rec.get('env')))
             except (RuntimeError, KeyError, ValueError) as e:
                 log(f'rearm {pane}: {e}')
                 del pending[pane]

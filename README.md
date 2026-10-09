@@ -41,7 +41,7 @@ To hack on it, clone the repo and use `herdr plugin link <path>`, which runs the
 
 | Agent | herdr kind | Status | Session history | Resumes with |
 | --- | --- | --- | --- | --- |
-| [Claude Code](https://claude.com/claude-code) | `claude` | ✅ supported | `~/.claude/projects/*/<session>.jsonl` | `claude <flags> --resume <id>` |
+| [Claude Code](https://claude.com/claude-code) | `claude` | ✅ supported | `~/.claude/projects/*/<session>.jsonl`, or under the agent's `CLAUDE_CONFIG_DIR` | `claude <flags> --resume <id>` |
 | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `hermes` | ✅ supported | `~/.hermes/state.db` | `hermes <flags> --resume <id>` |
 | [Codex CLI](https://github.com/openai/codex) | `codex` | 🗺️ next | | |
 | [OpenCode](https://opencode.ai) | `opencode` | 🗺️ next | | |

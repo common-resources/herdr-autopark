@@ -140,9 +140,21 @@ def test_crons_keep_the_session_awake_until_each_is_deleted():
             path = f'{d}/s.jsonl'
             with open(path, 'w') as f:
                 f.write('\n'.join(json.dumps(r) for r in rows) + '\n')
-            h._transcript = lambda sid, p=path: p
+            h._transcript = lambda sid, env=None, p=path: p
             assert h.activity('s', now - 7200)[1] == want, (rows[-1], want)
             assert h.activity('s', now)[1] == [], 'crons from before the process started died with it'
+
+
+def test_session_follows_the_agents_config_dir():
+    h = ClaudeCode()
+    with tempfile.TemporaryDirectory() as d:
+        os.makedirs(f'{d}/projects/-x')
+        open(f'{d}/projects/-x/S.jsonl', 'w').close()
+        assert h._transcript('S', {'CLAUDE_CONFIG_DIR': d}) == f'{d}/projects/-x/S.jsonl'
+        assert h._transcript('S', {}) is None, 'an agent without the variable keeps ~/.claude'
+        assert AP.proc_env(os.getpid(), ('PATH', 'AUTOPARK_NOT_SET')) == {'PATH': os.environ['PATH']}
+    cmd = AP.waiter_command('claude', 'S', '/', 't', 'n', ['claude', '--resume', 'S'], None, {'CLAUDE_CONFIG_DIR': '/a b'})
+    assert cmd.startswith("'CLAUDE_CONFIG_DIR=/a b' AUTOPARK_KIND=claude "), cmd
 
 
 def test_closed_pane_forgets_only_its_own_park_files():

@@ -7,6 +7,8 @@ An adapter answers five questions for one herdr agent kind:
   activity       last real message time, and anything still pending (wakeups, background jobs)
   blocks         the conversation as display blocks, oldest first, for the parked view
   relaunch       the argv that resumes the session
+  env            environment variables that decide where the harness keeps its sessions; the
+                 parked process's values travel to the waiter, so the view and the resume see them
 Display blocks: ('user', text) ('assistant', text) ('tool', name, arg) ('result', first_line).
 """
 
@@ -58,18 +60,21 @@ def _first_line(text):
 class ClaudeCode:
     kind = 'claude'
     procs = ('claude',)
+    env = ('CLAUDE_CONFIG_DIR',)
 
-    def _transcript(self, sid):
-        tx = glob.glob(f'{HOME}/.claude/projects/*/{sid}.jsonl')
+    def _transcript(self, sid, env=None):
+        """`env` is the session's own environment; the waiter and the view inherit it instead."""
+        root = (os.environ if env is None else env).get('CLAUDE_CONFIG_DIR') or f'{HOME}/.claude'
+        tx = glob.glob(f'{glob.escape(root)}/projects/*/{sid}.jsonl')
         return tx[0] if tx else None
 
     def session_id(self, agent, pid, cwd):
         return (agent.get('agent_session') or {}).get('value')
 
-    def activity(self, sid, since_epoch):
+    def activity(self, sid, since_epoch, env=None):
         """(last activity epoch or None, pending kinds). Subagent and workflow files under the
         session dir count as activity."""
-        path = self._transcript(sid)
+        path = self._transcript(sid, env)
         if not path:
             return None, []
         size = os.path.getsize(path)
@@ -155,6 +160,7 @@ class ClaudeCode:
 class Hermes:
     kind = 'hermes'
     procs = ('hermes',)
+    env = ()  # ponytail: HERMES_HOME is not followed; db and processes below assume ~/.hermes
     db = f'{HOME}/.hermes/state.db'
     processes = f'{HOME}/.hermes/processes.json'
 
@@ -181,7 +187,7 @@ class Hermes:
         )
         return rows[0][0] if len(rows) == 1 else None
 
-    def activity(self, sid, since_epoch):
+    def activity(self, sid, since_epoch, env=None):
         last = self._q("select max(timestamp) from messages where session_id=? and role in ('user','assistant')", sid)[0][0]
         pending = []
         if self._q(
