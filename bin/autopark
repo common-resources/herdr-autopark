@@ -62,6 +62,7 @@ DEFAULTS = {
 # Children that are part of an idle session, not work in flight.
 BENIGN_DEFAULT = (
     r'mcp-server|mcp_server|[-_/]mcp\b|\bmcp[-_]|/node_modules/@modelcontextprotocol/|/bin/semble\b|\buv\b.*\brun\b.*mcp'
+    r'|\smcp(\s|$)'  # "mcp" as a subcommand, e.g. `paper mcp`
     r'|^\S*git -c core\.fsmonitor= -c core\.hooksPath=/dev/null'
     r'|typescript-language-server|tsserver|rust-analyzer|vtsls|pyright|gopls'
 )
@@ -132,7 +133,9 @@ def agents():
 
 
 def agent_pid_for(pane_id, procs):
-    """Topmost process of the harness in this pane (a wrapper may re-exec or fork itself)."""
+    """Topmost process of the harness in this pane (a wrapper may re-exec or fork itself).
+    Pane ids repeat across herdr sessions, so the process must also belong to this daemon's
+    session: its HERDR_SOCKET_PATH (unset in the default session) has to be our socket."""
     found = {}
     for pid in filter(str.isdigit, os.listdir('/proc')):
         try:
@@ -143,7 +146,10 @@ def agent_pid_for(pane_id, procs):
             ppid = int(open(f'/proc/{pid}/stat').read().rsplit(')', 1)[1].split()[1])
         except OSError:
             continue
-        if f'HERDR_PANE_ID={pane_id}'.encode() in env:
+        if f'HERDR_PANE_ID={pane_id}'.encode() not in env:
+            continue
+        sock = next((e[18:].decode() for e in env if e.startswith(b'HERDR_SOCKET_PATH=')), '') or DEFAULT_SOCKET
+        if sock == SOCKET:
             found[int(pid)] = ppid
     tops = [p for p, pp in found.items() if pp not in found]
     return tops[0] if len(tops) == 1 else None

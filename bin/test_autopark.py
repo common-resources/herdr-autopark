@@ -18,6 +18,9 @@ def load_autopark():
     """Import the extension-less script without running its sweep."""
     argv, sys.argv = sys.argv, ['autopark']
     os.environ['AUTOPARK_CONFIG'] = '/nonexistent'
+    # Run from inside a herdr pane, these would point the module at that live session.
+    for name in ('HERDR_SOCKET_PATH', 'HERDR_PLUGIN_STATE_DIR', 'HERDR_PLUGIN_CONFIG_DIR'):
+        os.environ.pop(name, None)
     mod = types.ModuleType('autopark')
     mod.__file__ = f'{HERE}/autopark'
     try:
@@ -155,6 +158,38 @@ def test_session_follows_the_agents_config_dir():
         assert AP.proc_env(os.getpid(), ('PATH', 'AUTOPARK_NOT_SET')) == {'PATH': os.environ['PATH']}
     cmd = AP.waiter_command('claude', 'S', '/', 't', 'n', ['claude', '--resume', 'S'], None, {'CLAUDE_CONFIG_DIR': '/a b'})
     assert cmd.startswith("'CLAUDE_CONFIG_DIR=/a b' AUTOPARK_KIND=claude "), cmd
+
+
+def test_mcp_servers_are_not_work():
+    for cmd in ('/home/u/.paper/bin/paper mcp', 'node /x/mcp-server-foo/index.js', 'uv run --with x mcp_thing', 'tool mcp serve'):
+        assert AP.BENIGN_CHILD.search(cmd), cmd
+    for cmd in ('pnpm test', 'node server.js', 'python3 mcpherson.py'):
+        assert not AP.BENIGN_CHILD.search(cmd), cmd
+
+
+def test_agent_process_is_matched_within_its_own_session():
+    """Every herdr session has a w1:p1; the pid must come from the daemon's own session."""
+    pane = f'autopark-test:{os.getpid()}'
+    spawn = lambda sock: subprocess.Popen(  # noqa: E731
+        ['sleep', '30'], env={'HERDR_PANE_ID': pane, **({'HERDR_SOCKET_PATH': sock} if sock else {})}
+    )
+    default, named = spawn(None), spawn('/named/herdr.sock')
+    real = AP.SOCKET
+    try:
+        for _ in range(100):  # until both children have exec'd into sleep
+            if all(open(f'/proc/{p.pid}/comm').read().strip() == 'sleep' for p in (default, named)):
+                break
+            time.sleep(0.01)
+        assert AP.agent_pid_for(pane, ('sleep',)) == default.pid, 'no socket variable means the default session'
+        AP.SOCKET = '/named/herdr.sock'
+        assert AP.agent_pid_for(pane, ('sleep',)) == named.pid
+        AP.SOCKET = '/third/herdr.sock'
+        assert AP.agent_pid_for(pane, ('sleep',)) is None
+    finally:
+        AP.SOCKET = real
+        for p in (default, named):
+            p.kill()
+            p.wait()
 
 
 def test_closed_pane_forgets_only_its_own_park_files():
