@@ -265,6 +265,44 @@ def test_rearm_waits_for_starting_shell_and_old_records():
     assert all('AUTOPARK_KIND=claude' in c[3] for c in runs), runs
 
 
+def test_wake_hands_the_prompt_to_the_resume_or_prompts_after():
+    """Claude gets the message on its resume command; a waiter that ignores the file (or a
+    harness without an initial prompt) gets it through herdr once the input box is drawn."""
+
+    def run(kind, waiter_takes_file):
+        calls, state = [], {'parked': True}
+
+        def fake_herdr(*args):
+            calls.append(args)
+            if args[:2] == ('agent', 'get'):
+                a = {'agent': 'parked', 'agent_status': 'idle'} if state['parked'] else {'agent': kind, 'agent_status': 'idle'}
+                return json.dumps({'result': {'agent': a}})
+            if args[:2] == ('pane', 'send-keys'):
+                f = f'{d}/parked/s.prompt'
+                if waiter_takes_file and os.path.exists(f):
+                    os.remove(f)
+                state['parked'] = False
+            if args[:2] == ('pane', 'read'):
+                return '\u276f '
+            return ''
+
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(f'{d}/parked')
+            json.dump({'sid': 's', 'pane': 'w1:p1', 'kind': kind}, open(f'{d}/parked/s.json', 'w'))
+            AP.STATE_DIR, real = d, AP.herdr
+            AP.herdr = fake_herdr
+            try:
+                assert AP.wake('s', 'hi', step=0) == 'w1:p1'
+                assert not os.path.exists(f'{d}/parked/s.prompt')
+            finally:
+                AP.herdr = real
+        return [c for c in calls if c[:2] == ('agent', 'prompt')]
+
+    assert run('claude', waiter_takes_file=True) == []
+    assert run('claude', waiter_takes_file=False) == [('agent', 'prompt', 'w1:p1', 'hi')]
+    assert run('hermes', waiter_takes_file=True) == [('agent', 'prompt', 'w1:p1', 'hi')]
+
+
 if __name__ == '__main__':
     tests = [f for name, f in sorted(globals().items()) if name.startswith('test_')]
     for t in tests:

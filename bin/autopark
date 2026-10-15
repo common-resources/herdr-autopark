@@ -19,6 +19,7 @@ An agent is parked only when every check says it is truly idle. Any doubt means 
 Every check is repeated right before /exit to close the race with a user typing.
 
 Usage: autopark [--daemon] [--dry-run] [--idle-minutes N] [--only PANE_ID] [--verbose]
+       autopark --wake <pane-id|session-id> [--prompt TEXT]
 """
 
 import contextlib
@@ -294,7 +295,8 @@ def idle_note(idle_min):
 
 def waiter_command(kind, sid, cwd, title, note, relaunch, snapshot, agent_env=None):
     env = [f'{k}={v}' for k, v in (agent_env or {}).items()]
-    env += [f'AUTOPARK_KIND={kind}'] + ([f'AUTOPARK_SNAPSHOT={snapshot}'] if snapshot else [])
+    env += [f'AUTOPARK_KIND={kind}', f'AUTOPARK_PROMPT={STATE_DIR}/parked/{sid}.prompt']
+    env += [f'AUTOPARK_SNAPSHOT={snapshot}'] if snapshot else []
     env += [] if CFG['show_transcript'] else ['AUTOPARK_PLAIN=1']
     return ' '.join(shlex.quote(x) for x in [*env, WAITER, sid, cwd, title, note, *relaunch])
 
@@ -513,6 +515,50 @@ def rearm(wait=60, step=2):
         time.sleep(step)
 
 
+def wake(target, prompt=None, timeout=120, step=1):
+    """Resume a parked pane on behalf of another agent, and optionally hand it a prompt.
+    `target` is a pane id or the parked session id. herdr's `agent prompt` refuses the parked
+    placeholder, so this presses Enter in the waiter and waits for the harness to report itself
+    idle in that pane. A pane that is already awake is prompted directly."""
+    rec = next((r for _, r in records() if target in (r.get('sid'), r.get('pane'))), {})
+    pane = rec.get('pane', target)
+    a = json.loads(herdr('agent', 'get', pane))['result']['agent']
+    handed = None
+    if a.get('agent') == 'parked':
+        # herdr calls a starting agent idle before its input box takes text, so a prompt sent then
+        # is lost. A harness that takes an initial prompt gets it on the resume command instead.
+        if prompt and rec and getattr(HARNESSES.get(rec.get('kind', 'claude')), 'prompt_arg', False):
+            handed = f"{STATE_DIR}/parked/{rec['sid']}.prompt"
+            with open(handed, 'w') as f:
+                f.write(prompt)
+        herdr('pane', 'send-keys', pane, 'enter')
+        log(f'WAKE {pane} {a.get("terminal_title_stripped", "")!r} requested over the API')
+        deadline = time.time() + timeout
+        while True:
+            time.sleep(step)
+            try:
+                a = json.loads(herdr('agent', 'get', pane))['result']['agent']
+            except RuntimeError:  # no agent in the pane between the waiter's release and the harness's report
+                a = {}
+            if a.get('agent') in HARNESSES and a.get('agent_status') in ('idle', 'done', 'working'):
+                break
+            if time.time() >= deadline:
+                seen = f'{a.get("agent")} {a.get("agent_status")}'
+                raise RuntimeError(f'{pane} did not come back within {timeout}s (last seen: {seen})')
+        if handed and os.path.exists(handed):  # a waiter started by an older autopark ignores it
+            os.remove(handed)
+            handed = None
+        if prompt and not handed:
+            while draft_text(pane) and time.time() < deadline:  # input box not drawn yet
+                time.sleep(step)
+            time.sleep(2 * step)
+    elif a.get('agent') not in HARNESSES:
+        raise RuntimeError(f'{pane} hosts {a.get("agent")!r}, not a parked or supported agent')
+    if prompt and not handed:
+        herdr('agent', 'prompt', pane, prompt)
+    return pane
+
+
 def forget_pane(pane):
     """Drop the park record, screen capture and abort marker of a closed pane. Records stay
     while the pane lives: the resume grace reads them. herdr never reuses a pane id."""
@@ -520,7 +566,7 @@ def forget_pane(pane):
     for path, rec in list(records()):
         if rec.get('pane') != pane:
             continue
-        for ext in ('.json', '.screen', '.abort'):
+        for ext in ('.json', '.screen', '.abort', '.prompt'):
             with contextlib.suppress(FileNotFoundError):
                 os.remove(path[:-5] + ext)
         log(f'forgot {pane}: pane closed')
@@ -531,5 +577,13 @@ if __name__ == '__main__':
         rearm()
     elif '--pane-closed' in sys.argv:  # [[events]] pane.closed
         forget_pane(json.loads(os.environ.get('HERDR_PLUGIN_EVENT_JSON') or '{}').get('data', {}).get('pane_id'))
+    elif '--wake' in sys.argv:  # another agent or script: autopark --wake <pane|session> [--prompt TEXT]
+        try:
+            target = sys.argv[sys.argv.index('--wake') + 1]
+            prompt = sys.argv[sys.argv.index('--prompt') + 1] if '--prompt' in sys.argv else None
+            print(json.dumps({'pane_id': wake(target, prompt)}))
+        except (IndexError, RuntimeError, KeyError, ValueError) as e:
+            print(f'autopark --wake: {e}', file=sys.stderr)
+            sys.exit(1)
     else:
         daemon() if '--daemon' in sys.argv else main()

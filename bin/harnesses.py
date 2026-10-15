@@ -7,6 +7,8 @@ An adapter answers five questions for one herdr agent kind:
   activity       last real message time, and anything still pending (wakeups, background jobs)
   blocks         the conversation as display blocks, oldest first, for the parked view
   relaunch       the argv that resumes the session
+  prompt_arg     True when the relaunch argv takes a first prompt as its last argument, so a
+                 wake request's message rides on the resume instead of racing the input box
   env            environment variables that decide where the harness keeps its sessions; the
                  parked process's values travel to the waiter, so the view and the resume see them
 Display blocks: ('user', text) ('assistant', text) ('tool', name, arg) ('result', first_line).
@@ -61,6 +63,7 @@ class ClaudeCode:
     kind = 'claude'
     procs = ('claude',)
     env = ('CLAUDE_CONFIG_DIR',)
+    prompt_arg = True  # `claude --resume <id> "<prompt>"` opens the session and submits it
 
     def _transcript(self, sid, env=None):
         """`env` is the session's own environment; the waiter and the view inherit it instead."""
@@ -160,6 +163,7 @@ class ClaudeCode:
 class Hermes:
     kind = 'hermes'
     procs = ('hermes',)
+    prompt_arg = False  # only -z/-q, which are one-shot and leave no interactive session
     env = ()  # ponytail: HERMES_HOME is not followed; db and processes below assume ~/.hermes
     db = f'{HOME}/.hermes/state.db'
     processes = f'{HOME}/.hermes/processes.json'

@@ -4,6 +4,7 @@
 # report claiming "claude" in a pane the real Claude integration used; any other label works),
 # waits for Enter, then hands the pane back to Claude on the same session.
 # Usage: parked-wait <session-id> <cwd> <title> <parked-note> <relaunch argv...>
+# AUTOPARK_PROMPT names the file a wake request writes its message to.
 # AUTOPARK_PLAIN=1 shows a one-line banner instead of the transcript view.
 set -u
 sid=$1 cwd=$2 title=$3 note=$4
@@ -66,6 +67,12 @@ done
 
 trap - EXIT WINCH
 leave
+# `autopark --wake` leaves another agent's message here; it becomes the resumed session's first prompt.
+if [[ -n ${AUTOPARK_PROMPT:-} && -f $AUTOPARK_PROMPT ]]; then
+  msg=$(<"$AUTOPARK_PROMPT")
+  rm -f "$AUTOPARK_PROMPT"
+  set -- "$@" "$msg"
+fi
 # The resumed agent must not inherit the view's settings (a nested parked-view would replay them).
-unset AUTOPARK_SNAPSHOT AUTOPARK_KIND AUTOPARK_PLAIN
+unset AUTOPARK_SNAPSHOT AUTOPARK_KIND AUTOPARK_PLAIN AUTOPARK_PROMPT
 exec "$@"
